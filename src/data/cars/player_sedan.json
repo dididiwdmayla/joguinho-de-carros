@@ -15,8 +15,8 @@
   "rollingResistance": 12.0,
   "length": 4.5,
   "width": 1.8,
-  "wheelWidth": 0.22,
-  "wheelDiameter": 0.62,
-  "trackWidth": 1.52,
+  "wheelWidth": 0.18,
+  "wheelDiameter": 0.42,
+  "trackWidth": 1.38,
   "sprite": "cars/player_sedan.png"
 }
