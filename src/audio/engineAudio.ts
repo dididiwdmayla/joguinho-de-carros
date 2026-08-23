@@ -23,6 +23,9 @@ import type { EngineAudioParams } from './audioParams'
 /** Seconds of noise looped underneath everything. */
 const NOISE_SECONDS = 2
 
+/** Where the volume control starts. */
+export const DEFAULT_VOLUME = 0.7
+
 /** Filters and oscillators are kept inside sane audible bounds. */
 const MIN_FILTER_HZ = 40
 const MIN_OSCILLATOR_HZ = 5
@@ -39,6 +42,7 @@ type EnginePhase = 'silent' | 'cranking' | 'running' | 'dying'
 /** Every node of the graph, built once and reused for the whole session. */
 interface EngineVoice {
   readonly context: BaseAudioContext
+  readonly compressor: DynamicsCompressorNode
   readonly master: GainNode
   readonly level: GainNode
   readonly lowpass: BiquadFilterNode
@@ -51,6 +55,16 @@ interface EngineVoice {
   readonly beatDepth: GainNode
 }
 
+/** What the debug overlay needs in order to explain silence. */
+export interface EngineAudioReadout {
+  /** State of the device, or why there is not one. */
+  state: string
+  /** Gain actually written onto the master node this frame. */
+  masterGain: number
+  /** Firing frequency being voiced right now [Hz]. */
+  fundamental: number
+}
+
 export interface EngineAudio {
   readonly params: EngineAudioParams
   readonly engine: EngineReference
@@ -58,6 +72,10 @@ export interface EngineAudio {
   voice: EngineVoice | null
   /** Player's mute switch. Off once the device opens, as asked. */
   muted: boolean
+  /** Player's volume, 0..1, multiplying the bus level. */
+  volume: number
+  /** Refreshed every frame, whether or not there is a device to play through. */
+  readonly readout: EngineAudioReadout
   /** False while the page is hidden, so a backgrounded tab never drones on. */
   audible: boolean
   phase: EnginePhase
@@ -78,6 +96,8 @@ export function createEngineAudio(
     engine,
     voice: null,
     muted: false,
+    volume: DEFAULT_VOLUME,
+    readout: { state: 'sem contexto', masterGain: 0, fundamental: 0 },
     audible: true,
     phase: 'silent',
     dying: 0,
@@ -103,6 +123,10 @@ export function toggleEngineAudioMuted(audio: EngineAudio): void {
   audio.muted = !audio.muted
 }
 
+export function setEngineAudioVolume(audio: EngineAudio, volume: number): void {
+  audio.volume = clamp(volume, 0, 1)
+}
+
 /** A hidden page keeps no rendering loop, so the sound would freeze mid-note. */
 export function setEngineAudioAudible(audio: EngineAudio, audible: boolean): void {
   audio.audible = audible
@@ -123,6 +147,28 @@ export function startEngineAudio(audio: EngineAudio, context?: BaseAudioContext)
   audio.voice = buildVoice(opened, audio.params)
 }
 
+/**
+ * Opens the device if it is not open yet, and asks a suspended one to run.
+ *
+ * Must be called from inside a user gesture, and is meant to be called on
+ * every one of them: creating the context is not enough, several browsers hand
+ * back a suspended context and only a resume() from inside a gesture handler
+ * moves it, and that resume can be refused more than once.
+ */
+export function resumeEngineAudio(audio: EngineAudio): void {
+  startEngineAudio(audio)
+  const context = audio.voice?.context
+  if (context === undefined) return
+  if (context.state === 'running') return
+  const resumable = context as BaseAudioContext & { resume?: () => Promise<void> }
+  if (typeof resumable.resume !== 'function') return
+  try {
+    void resumable.resume().catch(() => undefined)
+  } catch {
+    // A device that refuses to start is not a reason to stop the game.
+  }
+}
+
 function openContext(): AudioContext | null {
   try {
     const owner = window as typeof window & { webkitAudioContext?: typeof AudioContext }
@@ -141,9 +187,19 @@ function openContext(): AudioContext | null {
 }
 
 function buildVoice(context: BaseAudioContext, params: EngineAudioParams): EngineVoice {
+  // Everything meets here and is squeezed on the way out, so the bus can run
+  // loud enough to be heard on a phone without the peaks clipping.
+  const compressor = context.createDynamicsCompressor()
+  compressor.threshold.value = params.compressor.thresholdDb
+  compressor.knee.value = params.compressor.kneeDb
+  compressor.ratio.value = params.compressor.ratio
+  compressor.attack.value = params.compressor.attack
+  compressor.release.value = params.compressor.release
+  compressor.connect(context.destination)
+
   const master = context.createGain()
   master.gain.value = 0
-  master.connect(context.destination)
+  master.connect(compressor)
 
   const level = context.createGain()
   level.gain.value = 0
@@ -212,6 +268,7 @@ function buildVoice(context: BaseAudioContext, params: EngineAudioParams): Engin
 
   return {
     context,
+    compressor,
     master,
     level,
     lowpass,
@@ -275,7 +332,12 @@ export function updateEngineAudio(
   if (audio.phase === 'running' || audio.phase === 'cranking') audio.lastRpm = powertrain.rpm
 
   const voice = audio.voice
-  if (voice === null) return
+  if (voice === null) {
+    audio.readout.state = 'sem contexto'
+    audio.readout.masterGain = 0
+    audio.readout.fundamental = 0
+    return
+  }
 
   // --- What the engine is doing this frame --------------------------------
   const load = clamp(throttle, 0, 1)
@@ -360,6 +422,25 @@ export function updateEngineAudio(
     now,
   )
 
-  const master = audio.muted || !audio.audible ? 0 : params.masterGain
+  const master =
+    audio.muted || !audio.audible ? 0 : params.masterGain * clamp(audio.volume, 0, 1)
   ramp(voice.master.gain, master, smoothing.gain, now)
+
+  audio.readout.state = describeContextState(voice.context.state)
+  audio.readout.masterGain = master
+  audio.readout.fundamental = fundamental
+}
+
+/** Portuguese for the overlay, and one word for each way audio can be silent. */
+function describeContextState(state: AudioContextState): string {
+  switch (state) {
+    case 'running':
+      return 'rodando'
+    case 'suspended':
+      return 'suspenso'
+    case 'closed':
+      return 'fechado'
+    default:
+      return String(state)
+  }
 }

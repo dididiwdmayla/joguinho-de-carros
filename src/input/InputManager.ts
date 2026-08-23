@@ -6,38 +6,52 @@
  * discrete actions returned by `drainCommands()`.
  *
  * Touches are tracked one by one, keyed by their identifier, so steering with
- * one thumb while the other holds the throttle is just two independent
+ * one thumb while the other feathers the clutch is just two independent
  * pointers -- there is never an assumption that only one finger is down.
  */
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
+import { moveShifter, releaseShifter } from '../ui/shifterGate'
 import {
   computeTouchLayout,
   containsPoint,
+  gateColumns,
+  gateGeometry,
   type Rect,
   type TouchLayout,
 } from '../ui/touchLayout'
 import type { UiButton, UiState } from '../ui/uiState'
-import type { PowertrainCommand } from '../vehicle/powertrain'
+import { CLUTCH_ENGAGE_LIMIT, type PowertrainCommand } from '../vehicle/powertrain'
 import { createInputState, type InputState } from './input'
 
 /** Pedal reading at the shallow edge, so a light press still does something. */
-const PEDAL_FLOOR = 0.25
+const PEDAL_FLOOR = 0.1
 
-type ControlId = 'steering' | 'throttle' | 'brake' | 'handbrake' | UiButton
+/** How fast the clutch pedal comes back up once the finger leaves it [1/s]. */
+const CLUTCH_RETURN_RATE = 2.5
+
+type ControlId =
+  | 'steering'
+  | 'throttle'
+  | 'brake'
+  | 'clutch'
+  | 'handbrake'
+  | 'shifter'
+  | 'volume'
+  | UiButton
 
 /** Buttons that act once when touched, rather than being held. */
 const MOMENTARY: ReadonlySet<ControlId> = new Set<ControlId>([
   'controls',
   'fullscreen',
   'debug',
-  'gearUp',
-  'gearDown',
+  'mute',
   'reverse',
   'neutral',
   'ignition',
   'mode',
-  'mute',
+  'sequentialUp',
+  'sequentialDown',
 ])
 
 /** Identifier used for the mouse, which never collides with a touch id. */
@@ -48,6 +62,7 @@ interface ActivePointer {
   steer: number
   throttle: number
   brake: number
+  clutch: number
 }
 
 export interface InputManagerOptions {
@@ -58,7 +73,7 @@ export interface InputManagerOptions {
   onFullscreenRequest: () => void
   /**
    * Called synchronously on the first key or touch of every event, from inside
-   * the handler. Opening an audio device is only allowed there.
+   * the handler. Opening and resuming an audio device is only allowed there.
    */
   onUserGesture: () => void
 }
@@ -73,6 +88,8 @@ export class InputManager {
   private readonly keys = new Set<string>()
   private readonly pointers = new Map<number, ActivePointer>()
   private commands: PowertrainCommand[] = []
+  /** Clutch pedal, kept here because it has to fall back on its own. */
+  private clutchPedal = 0
 
   constructor(options: InputManagerOptions) {
     this.canvas = options.canvas
@@ -108,8 +125,12 @@ export class InputManager {
     window.removeEventListener('mouseup', this.onMouseUp)
   }
 
-  /** Merges every source into the current control state. */
-  sample(): Readonly<InputState> {
+  /**
+   * Merges every source into the current control state. `dt` is the frame time,
+   * which the clutch needs: released, it comes back up at its own rate rather
+   * than snapping to the top.
+   */
+  sample(dt: number): Readonly<InputState> {
     const keyThrottle = this.anyKey('KeyW', 'ArrowUp') ? 1 : 0
     const keyBrake = this.anyKey('KeyS', 'ArrowDown') ? 1 : 0
     const keySteer =
@@ -120,7 +141,7 @@ export class InputManager {
     let pointerSteer = 0
     let steering = false
     let pointerHandbrake = false
-    let pointerClutch = false
+    let clutchHeld: number | null = null
     for (const pointer of this.pointers.values()) {
       switch (pointer.control) {
         case 'steering':
@@ -133,25 +154,29 @@ export class InputManager {
         case 'brake':
           pointerBrake = Math.max(pointerBrake, pointer.brake)
           break
+        case 'clutch':
+          clutchHeld = Math.max(clutchHeld ?? 0, pointer.clutch)
+          break
         case 'handbrake':
           pointerHandbrake = true
-          break
-        case 'clutch':
-          pointerClutch = true
           break
         default:
           break
       }
     }
 
+    // The key has no travel, so it means the floor; a finger means wherever it
+    // is sitting. With neither, the pedal climbs back at a fixed rate.
+    if (this.keys.has('KeyC')) this.clutchPedal = 1
+    else if (clutchHeld !== null) this.clutchPedal = clutchHeld
+    else this.clutchPedal = Math.max(0, this.clutchPedal - CLUTCH_RETURN_RATE * dt)
+
     this.ui.steeringActive = steering
     this.state.throttle = Math.max(keyThrottle, pointerThrottle)
     this.state.brake = Math.max(keyBrake, pointerBrake)
     this.state.steer = steering ? pointerSteer : keySteer
     this.state.handbrake = this.keys.has('Space') || pointerHandbrake
-    // The touch button behaves exactly like the key: the pedal itself travels
-    // at its own rate inside the powertrain, this only says it is being held.
-    this.state.clutchPress = this.keys.has('KeyC') || pointerClutch ? 1 : 0
+    this.state.clutchPress = this.clutchPedal
     return this.state
   }
 
@@ -215,6 +240,7 @@ export class InputManager {
     this.keys.clear()
     this.pointers.clear()
     this.ui.pressedButtons.clear()
+    this.ui.shifter.dragging = false
   }
 
   // ------------------------------------------------------------------- touch
@@ -241,7 +267,7 @@ export class InputManager {
   }
 
   // ------------------------------------------------------------------- mouse
-  // The same controls, so the on-screen buttons are usable with a cursor.
+  // The same controls, so everything on screen is usable with a cursor too.
 
   private readonly onMouseDown = (event: MouseEvent): void => {
     const rect = this.canvas.getBoundingClientRect()
@@ -273,13 +299,13 @@ export class InputManager {
 
     if (MOMENTARY.has(control)) {
       this.ui.pressedButtons.add(control as UiButton)
-      this.pointers.set(id, { control, steer: 0, throttle: 0, brake: 0 })
+      this.pointers.set(id, { control, steer: 0, throttle: 0, brake: 0, clutch: 0 })
       this.activateButton(control as UiButton)
       return
     }
 
-    if (control === 'clutch') this.ui.pressedButtons.add('clutch')
-    const pointer: ActivePointer = { control, steer: 0, throttle: 0, brake: 0 }
+    if (control === 'shifter') this.ui.shifter.dragging = true
+    const pointer: ActivePointer = { control, steer: 0, throttle: 0, brake: 0, clutch: 0 }
     this.updatePointer(pointer, x, y)
     this.pointers.set(id, pointer)
   }
@@ -293,6 +319,7 @@ export class InputManager {
   private endPointer(id: number): void {
     const pointer = this.pointers.get(id)
     if (pointer === undefined) return
+    if (pointer.control === 'shifter') this.releaseShifter()
     this.ui.pressedButtons.delete(pointer.control as UiButton)
     this.pointers.delete(id)
   }
@@ -304,6 +331,7 @@ export class InputManager {
         // Releasing the layer must not leave a pedal held down.
         this.pointers.clear()
         this.ui.pressedButtons.clear()
+        this.ui.shifter.dragging = false
         break
       case 'debug':
         this.ui.debugVisible = !this.ui.debugVisible
@@ -311,10 +339,10 @@ export class InputManager {
       case 'fullscreen':
         this.onFullscreenRequest()
         break
-      case 'gearUp':
+      case 'sequentialUp':
         this.commands.push({ kind: 'shiftUp' })
         break
-      case 'gearDown':
+      case 'sequentialDown':
         this.commands.push({ kind: 'shiftDown' })
         break
       case 'reverse':
@@ -346,15 +374,28 @@ export class InputManager {
     if (!this.ui.controlsVisible) return null
 
     if (containsPoint(layout.fullscreenButton, x, y)) return 'fullscreen'
+    if (containsPoint(layout.volume, x, y)) return 'volume'
     if (containsPoint(layout.handbrake, x, y)) return 'handbrake'
     if (containsPoint(layout.throttle, x, y)) return 'throttle'
     if (containsPoint(layout.brake, x, y)) return 'brake'
-    if (containsPoint(layout.gearUp, x, y)) return 'gearUp'
-    if (containsPoint(layout.gearDown, x, y)) return 'gearDown'
     if (containsPoint(layout.mode, x, y)) return 'mode'
-    if (containsPoint(layout.reverse, x, y)) return 'reverse'
-    if (containsPoint(layout.neutral, x, y)) return 'neutral'
     if (containsPoint(layout.ignition, x, y)) return 'ignition'
+
+    // The middle of the screen belongs to whichever gearbox is fitted.
+    switch (this.ui.mode) {
+      case 'manual':
+        if (containsPoint(layout.gate, x, y)) return 'shifter'
+        break
+      case 'sequential':
+        if (containsPoint(layout.sequentialUp, x, y)) return 'sequentialUp'
+        if (containsPoint(layout.sequentialDown, x, y)) return 'sequentialDown'
+        break
+      case 'automatic':
+        if (containsPoint(layout.reverse, x, y)) return 'reverse'
+        if (containsPoint(layout.neutral, x, y)) return 'neutral'
+        break
+    }
+
     // Before the steering bar: its grab area reaches up towards the clutch.
     if (containsPoint(layout.clutch, x, y)) return 'clutch'
     if (containsPoint(layout.steeringGrab, x, y)) return 'steering'
@@ -376,9 +417,47 @@ export class InputManager {
       case 'brake':
         pointer.brake = pedalAmount(layout.brake, y, 'down')
         break
+      case 'clutch':
+        // Straight travel: the top of the pedal is out, the bottom is floored,
+        // and everything between is where the friction point is found.
+        pointer.clutch = clamp((y - layout.clutch.y) / layout.clutch.height, 0, 1)
+        break
+      case 'volume':
+        this.ui.volume = clamp((x - layout.volume.x) / layout.volume.width, 0, 1)
+        break
+      case 'shifter':
+        this.updateShifter(layout, x, y)
+        break
       default:
         break
     }
+  }
+
+  // ------------------------------------------------------------------- gate
+
+  /** Turns the finger's position into gate coordinates and lets the rule move. */
+  private updateShifter(layout: TouchLayout, x: number, y: number): void {
+    const gate = gateGeometry(layout, this.ui.forwardGears)
+    const gear = moveShifter(this.ui.shifter, {
+      targetColumn: (x - gate.firstColumnX) / gate.columnSpacing,
+      targetLane: (y - gate.corridorY) / gate.laneReach,
+      columns: gate.columns,
+      forwardGears: this.ui.forwardGears,
+      // Only the manual gate has a clutch to wait for.
+      engageable: this.ui.mode !== 'manual' || this.ui.clutchPedal <= CLUTCH_ENGAGE_LIMIT,
+      currentGear: this.ui.gear,
+    })
+    this.requestGear(gear)
+  }
+
+  private releaseShifter(): void {
+    this.requestGear(releaseShifter(this.ui.shifter))
+  }
+
+  private requestGear(gear: number | null): void {
+    if (gear === null || gear === this.ui.shifter.requested) return
+    this.ui.shifter.requested = gear
+    this.commands.push({ kind: 'selectGear', gear })
   }
 }
 
@@ -423,3 +502,6 @@ const COMMAND_KEYS: Readonly<Record<string, PowertrainCommand>> = {
   Digit5: { kind: 'selectGear', gear: 5 },
   Digit6: { kind: 'selectGear', gear: 6 },
 }
+
+/** Re-exported so callers can size the gate without importing the layout. */
+export { gateColumns }

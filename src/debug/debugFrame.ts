@@ -1,4 +1,5 @@
 /** Read-only snapshot handed to the debug overlay each frame. */
+import type { EngineAudioReadout } from '../audio/engineAudio'
 import type { VehicleTelemetry } from '../vehicle/physics'
 
 export interface DebugFrame {
@@ -12,4 +13,6 @@ export interface DebugFrame {
   readonly steer: number
   /** Smoothed frames per second, to check the fixed step against the display. */
   readonly fps: number
+  /** Why the game is or is not making a sound. */
+  readonly audio: EngineAudioReadout
 }

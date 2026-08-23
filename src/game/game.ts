@@ -6,7 +6,11 @@
  * renderer uses to interpolate, so 30 fps and 144 fps produce the same physics
  * and the same motion, only sampled at different moments.
  */
-import { setEngineAudioMuted, updateEngineAudio } from '../audio/engineAudio'
+import {
+  setEngineAudioMuted,
+  setEngineAudioVolume,
+  updateEngineAudio,
+} from '../audio/engineAudio'
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from '../core/constants'
 import { clamp, lerp, lerpAngle } from '../core/math'
 import type { DebugFrame } from '../debug/debugFrame'
@@ -17,6 +21,7 @@ import { syncViewport } from '../render/viewport'
 import { stepVehicle } from '../vehicle/physics'
 import { applyPowertrainCommand, transmissionModeLabel } from '../vehicle/powertrain'
 import { copyVehicleState } from '../vehicle/vehicleState'
+import { syncShifterToGear } from '../ui/uiState'
 import type { GameState } from './state'
 
 /** Weight of one frame in the smoothed fps readout. */
@@ -65,8 +70,18 @@ function advanceFrame(state: GameState, timestamp: number): void {
       : clamp((timestamp - previous) / 1000, 0, FIXED_DT * MAX_STEPS_PER_FRAME)
   if (elapsed > 0) state.fps += (1 / elapsed - state.fps) * FPS_SMOOTHING
 
+  // The gearbox tells the controls what it is, so the input layer can lay out
+  // the right shifter and refuse a gear the clutch will not allow -- without
+  // reaching into the simulation itself.
+  state.ui.mode = state.powertrain.mode
+  state.ui.gear = state.powertrain.gear
+  state.ui.clutchPedal = state.powertrain.clutch
+  // The lever belongs to whoever is holding it; when nobody is, it goes where
+  // the gearbox actually is, so the number keys move it too.
+  syncShifterToGear(state.ui)
+
   // Input is sampled once per frame and reused by every step of that frame.
-  const input = state.input.sample()
+  const input = state.input.sample(elapsed)
 
   // Gear changes and the like act once, before the steps that follow: pressing
   // a key must never mean two gears because the frame ran long.
@@ -99,6 +114,7 @@ function advanceFrame(state: GameState, timestamp: number): void {
   // real seconds rather than simulation steps: an engine dying takes as long
   // to be heard as it takes to happen.
   setEngineAudioMuted(state.audio, state.ui.muted)
+  setEngineAudioVolume(state.audio, state.ui.volume)
   updateEngineAudio(
     state.audio,
     state.powertrain,
@@ -153,6 +169,7 @@ function buildRenderContext(
         yawRate: current.yawRate,
         steer: current.steer,
         fps: state.fps,
+        audio: state.audio.readout,
       }
     : null
 

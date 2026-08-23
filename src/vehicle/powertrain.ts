@@ -30,6 +30,18 @@ const BITE_END = 0.6
  */
 export const CLUTCH_ENGAGE_LIMIT = BITE_START
 
+/**
+ * Engagement above which the clutch counts as home: the engine is tied to the
+ * gearbox, so it can be stalled and the idle governor has no business
+ * propping it up. Not to be confused with CLUTCH_ENGAGE_LIMIT, which is a
+ * pedal position -- this one is how much torque the plates can carry.
+ */
+export const ENGAGED_THRESHOLD = 0.25
+
+/** Pedal travel over which the plates take hold, for drawing the bite band. */
+export const CLUTCH_BITE_START = BITE_START
+export const CLUTCH_BITE_END = BITE_END
+
 /** Rotational difference under which a clamped clutch counts as one shaft [rpm]. */
 const LOCK_DELTA_RPM = 40
 /** Engagement needed before the clutch may lock solid. */
@@ -174,6 +186,14 @@ export interface PowertrainTelemetry {
   locked: boolean
   running: boolean
   stalled: boolean
+  /**
+   * The four conditions of a stall, reported one by one so it is always
+   * visible which of them is the one not met.
+   */
+  stallBelowRpm: boolean
+  stallRunning: boolean
+  stallEngaged: boolean
+  stallInGear: boolean
 }
 
 export function createPowertrainTelemetry(mode: TransmissionMode): PowertrainTelemetry {
@@ -193,6 +213,10 @@ export function createPowertrainTelemetry(mode: TransmissionMode): PowertrainTel
     locked: false,
     running: true,
     stalled: false,
+    stallBelowRpm: false,
+    stallRunning: true,
+    stallEngaged: false,
+    stallInGear: false,
   }
 }
 
@@ -470,16 +494,46 @@ export function stepPowertrain(
   const wheelSpeed = load.vx + state.wheelSlip
   const rpmTrans = transmissionRpm(params, total, wheelSpeed)
 
-  // --- Engine torque ------------------------------------------------------
+  // --- Clutch -------------------------------------------------------------
+  // Worked out before the engine, because whether the idle governor is allowed
+  // to run at all depends on where the clutch is this very step.
   const driverThrottle = clamp(inputs.throttle, 0, 1)
+  if (manual) {
+    const target = 1 - clamp(inputs.clutchPress, 0, 1)
+    const rate = target < state.clutch ? params.clutchPressRate : params.clutchReleaseRate
+    state.clutch += clamp(target - state.clutch, -rate * dt, rate * dt)
+    state.engagement = state.running ? clutchEngagement(state.clutch) : 0
+  } else {
+    stepAutomaticClutch(state, params, rpmTrans, driverThrottle, dt)
+    // Kept in step with the engagement so the readouts and the on-screen pedal
+    // show the same thing whoever is working it.
+    state.clutch = BITE_START + (BITE_END - BITE_START) * state.engagement
+  }
+
+  // --- Engine torque ------------------------------------------------------
   // Idle governor. Proportional alone would settle below its target, because
   // some throttle is needed just to hold idle against the engine's own drag;
   // the integral term is what removes that droop and parks it on idleRpm.
-  const idleError = state.running ? (params.idleRpm - state.rpm) / params.idleRpm : 0
-  state.idleTrim = clamp(state.idleTrim + idleError * IDLE_GAIN_I * dt, 0, IDLE_MAX_THROTTLE)
-  const governor = state.running
-    ? clamp(state.idleTrim + idleError * IDLE_GAIN_P, 0, IDLE_MAX_THROTTLE)
+  //
+  // It only runs while the engine is free to idle: clutch out of the way, or
+  // no gear for it to be dragged by. In gear with the plates home it is
+  // entirely off, and the rpm falls until the engine dies -- propping it up
+  // there is exactly what would stop a car stalling when it should.
+  //
+  // The clutchless modes work their own pedal and have no stall to fall into,
+  // so their idle control stays on: without it an automatic could not hold
+  // idle against its own converter, and would never creep.
+  const governorFree =
+    !manual || state.gear === NEUTRAL_GEAR || state.engagement < ENGAGED_THRESHOLD
+  const idleError =
+    state.running && governorFree ? (params.idleRpm - state.rpm) / params.idleRpm : 0
+  state.idleTrim = governorFree
+    ? clamp(state.idleTrim + idleError * IDLE_GAIN_I * dt, 0, IDLE_MAX_THROTTLE)
     : 0
+  const governor =
+    state.running && governorFree
+      ? clamp(state.idleTrim + idleError * IDLE_GAIN_P, 0, IDLE_MAX_THROTTLE)
+      : 0
   const limiter = state.rpm >= params.maxRpm
   const cut = state.shiftCut > 0 && !manual
   // Only the driver's foot is lifted by the limiter and the shift cut. Idle
@@ -492,19 +546,6 @@ export function stepPowertrain(
     ? curveTorque(params.torqueCurve, state.rpm) * throttle -
       params.engineBraking * state.rpm * (1 - throttle)
     : 0
-
-  // --- Clutch -------------------------------------------------------------
-  if (manual) {
-    const target = 1 - clamp(inputs.clutchPress, 0, 1)
-    const rate = target < state.clutch ? params.clutchPressRate : params.clutchReleaseRate
-    state.clutch += clamp(target - state.clutch, -rate * dt, rate * dt)
-    state.engagement = state.running ? clutchEngagement(state.clutch) : 0
-  } else {
-    stepAutomaticClutch(state, params, rpmTrans, driverThrottle, dt)
-    // Kept in step with the engagement so the readouts and the on-screen pedal
-    // show the same thing whoever is working it.
-    state.clutch = BITE_START + (BITE_END - BITE_START) * state.engagement
-  }
 
   const capacity = params.clutchMaxTorque * state.engagement
   const deltaRpm = state.rpm - rpmTrans
@@ -626,9 +667,20 @@ export function stepPowertrain(
   state.locked = locked
 
   // --- Stalling -----------------------------------------------------------
-  // Only the manual mode can die, and only under load: a dropped clutch in too
-  // high a gear, or rolling to a stop without pressing it.
-  if (state.running && manual && total !== 0 && state.engagement > 0 && state.rpm < params.stallRpm) {
+  // The clutchless modes have no stall to fall into, so nothing may drag the
+  // engine below the speed it can recover from on its own. Applied before the
+  // test rather than after it, so those modes simply never reach the first
+  // condition and the test below is free of any mode of its own.
+  if (!manual && state.running) state.rpm = Math.max(state.rpm, params.stallRpm)
+
+  // Four conditions, and nothing else: the engine is turning too slowly to
+  // keep itself alive, it is still running, the plates are carrying, and there
+  // is a gear for the car to drag it through.
+  const stallBelowRpm = state.rpm < params.stallRpm
+  const stallRunning = state.running
+  const stallEngaged = state.engagement > ENGAGED_THRESHOLD
+  const stallInGear = state.gear !== NEUTRAL_GEAR
+  if (stallBelowRpm && stallRunning && stallEngaged && stallInGear) {
     state.running = false
     state.stalled = true
     state.rpm = 0
@@ -637,11 +689,6 @@ export function stepPowertrain(
     driveForce = 0
   }
   if (!state.running && state.starter <= 0) state.rpm = 0
-  // The clutchless modes have no stall to fall into, so nothing may drag the
-  // engine below the speed it can recover from on its own. The governor holds
-  // idle by itself in every normal case; this is only the backstop, and it sits
-  // low enough that the governor -- not the clamp -- does the work.
-  if (!manual && state.running) state.rpm = Math.max(state.rpm, params.stallRpm)
   state.rpm = clamp(state.rpm, 0, params.maxRpm)
 
   stepAutomatic(state, params, load.vx)
@@ -661,6 +708,10 @@ export function stepPowertrain(
   telemetry.locked = state.locked
   telemetry.running = state.running
   telemetry.stalled = state.stalled
+  telemetry.stallBelowRpm = stallBelowRpm
+  telemetry.stallRunning = stallRunning
+  telemetry.stallEngaged = stallEngaged
+  telemetry.stallInGear = stallInGear
 
   return driveForce
 }

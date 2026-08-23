@@ -13,12 +13,12 @@ import engineAudioUrl from './data/audio/engine.json?url'
 import playerSedanUrl from './data/cars/player_sedan.json?url'
 
 import { loadEngineAudioParams } from './audio/audioParams'
-import { createEngineAudio, setEngineAudioAudible, startEngineAudio } from './audio/engineAudio'
+import { createEngineAudio, resumeEngineAudio, setEngineAudioAudible } from './audio/engineAudio'
 import { loadSprites } from './assets/loader'
 import { loadManifest, spriteKeyForPath } from './assets/manifest'
 import { describeError, drawBootMessage } from './game/bootScreen'
 import { startGame } from './game/game'
-import { createGameState } from './game/state'
+import { createGameState, INITIAL_TRANSMISSION_MODE } from './game/state'
 import { InputManager } from './input/InputManager'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
@@ -106,14 +106,20 @@ async function boot(surface: Screen): Promise<void> {
     maxRpm: car.powertrain.maxRpm,
   })
 
-  const ui = createUiState(prefersTouchControls())
+  const ui = createUiState(
+    prefersTouchControls(),
+    INITIAL_TRANSMISSION_MODE,
+    car.powertrain.gearRatios.length,
+  )
   const input = new InputManager({
     canvas: surface.canvas,
     viewport: surface.viewport,
     ui,
-    // Runs inside the event handler, which is the only place a device opens.
+    // Runs inside the event handler, which is the only place a device opens
+    // -- and the only place a suspended one can be told to run. Called on
+    // every gesture, not just the first: one resume can be refused.
     onUserGesture: () => {
-      startEngineAudio(audio)
+      resumeEngineAudio(audio)
     },
     onFullscreenRequest: () => {
       // Must run inside the gesture handler, so it is called straight through.

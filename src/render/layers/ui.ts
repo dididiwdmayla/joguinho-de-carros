@@ -9,11 +9,19 @@ import { clamp } from '../../core/math'
 import { drawDebugOverlay } from '../../debug/overlay'
 import {
   computeTouchLayout,
+  gateGear,
+  gateGeometry,
   steeringKnobDiameter,
   type Rect,
   type TouchLayout,
 } from '../../ui/touchLayout'
-import { NEUTRAL_GEAR, REVERSE_GEAR } from '../../vehicle/powertrain'
+import {
+  CLUTCH_BITE_END,
+  CLUTCH_BITE_START,
+  gearLabel,
+  NEUTRAL_GEAR,
+  REVERSE_GEAR,
+} from '../../vehicle/powertrain'
 import { inScreenSpace } from '../renderer'
 import type { RenderContext } from '../scene'
 import { roundedRectPath } from '../shapes'
@@ -36,6 +44,7 @@ export function drawUi(context: RenderContext): void {
       drawHandbrake(context, layout)
       drawClutch(context, layout)
       drawGearbox(context, layout)
+      drawVolume(context, layout)
     }
     if (context.ui.rotateHintVisible) drawRotateHint(context, layout)
   })
@@ -244,69 +253,192 @@ function drawHandbrake(context: RenderContext, layout: TouchLayout): void {
 // ---------------------------------------------------------------- powertrain
 
 /**
- * The clutch fills from the left as the pedal goes down, so the friction point
- * is something you can see as well as feel. Same travel as the key: held means
- * going down, released means coming back up.
+ * A tall pedal whose travel is where the finger is, with the bite band marked
+ * down its side. Seeing the friction point is how you learn to feel it.
  */
 function drawClutch(context: RenderContext, layout: TouchLayout): void {
   const { ctx, powertrain } = context
   const rect = layout.clutch
   const pressed = clamp(1 - powertrain.clutch, 0, 1)
-  const held = context.ui.pressedButtons.has('clutch') || context.input.clutchPress > 0
-  const radius = rect.height * 0.24
+  const radius = rect.width * 0.3
 
   ctx.save()
   roundedRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius)
-  ctx.fillStyle = held ? PANEL_FILL_PRESSED : PANEL_FILL
+  ctx.fillStyle = pressed > 0.02 ? PANEL_FILL_PRESSED : PANEL_FILL
   ctx.fill()
+  ctx.clip()
   if (pressed > 0) {
-    ctx.clip()
     ctx.fillStyle = FILL_LEVEL
-    ctx.fillRect(rect.x, rect.y, rect.width * pressed, rect.height)
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height * pressed)
   }
+  // The bite, drawn where the pedal actually is when the plates take hold.
+  // The top of the pedal is fully out, the bottom is on the floor.
+  const biteTop = rect.y + (1 - CLUTCH_BITE_END) * rect.height
+  const biteBottom = rect.y + (1 - CLUTCH_BITE_START) * rect.height
+  ctx.fillStyle = 'rgba(255, 196, 120, 0.55)'
+  ctx.fillRect(rect.x + rect.width * 0.74, biteTop, rect.width * 0.26, biteBottom - biteTop)
   ctx.restore()
 
-  ctx.strokeStyle = held ? PANEL_STROKE_PRESSED : PANEL_STROKE
+  ctx.strokeStyle = pressed > 0.02 ? PANEL_STROKE_PRESSED : PANEL_STROKE
   ctx.lineWidth = 1.5
   roundedRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius)
   ctx.stroke()
 
-  drawLabel(ctx, rect, 'EMBREAGEM', 0.24)
+  drawRotatedLabel(ctx, rect, 'EMBREAGEM')
 }
 
 function drawGearbox(context: RenderContext, layout: TouchLayout): void {
   const { ctx, ui, powertrain } = context
-  drawButtonBox(ctx, layout.gearUp, ui.pressedButtons.has('gearUp'))
-  drawLabel(ctx, layout.gearUp, 'MARCHA +', 0.26)
-
-  drawButtonBox(ctx, layout.gearDown, ui.pressedButtons.has('gearDown'))
-  drawLabel(ctx, layout.gearDown, 'MARCHA -', 0.26)
 
   drawButtonBox(ctx, layout.mode, ui.pressedButtons.has('mode'))
-  drawLabel(ctx, layout.mode, powertrain.modeLabel, 0.34)
+  drawLabel(ctx, layout.mode, powertrain.modeLabel, 0.4)
+  drawButtonBox(ctx, layout.ignition, ui.pressedButtons.has('ignition') || powertrain.stalled)
+  drawLabel(ctx, layout.ignition, 'PARTIDA', 0.34)
 
-  // R and N stay lit while that gear is the one selected: it is a selector,
-  // not just a button.
-  drawButtonBox(
-    ctx,
-    layout.reverse,
-    ui.pressedButtons.has('reverse') || powertrain.gear === REVERSE_GEAR,
-  )
-  drawLabel(ctx, layout.reverse, 'RE', 0.34)
+  switch (ui.mode) {
+    case 'manual':
+      drawGate(context, layout)
+      break
+    case 'sequential':
+      drawButtonBox(ctx, layout.sequentialUp, ui.pressedButtons.has('sequentialUp'))
+      drawLabel(ctx, layout.sequentialUp, `${gearLabel(powertrain.gear)}  +`, 0.42)
+      drawButtonBox(ctx, layout.sequentialDown, ui.pressedButtons.has('sequentialDown'))
+      drawLabel(ctx, layout.sequentialDown, '-', 0.42)
+      break
+    case 'automatic':
+      drawButtonBox(ctx, layout.gearDisplay, false)
+      drawLabel(ctx, layout.gearDisplay, gearLabel(powertrain.gear), 0.5)
+      drawButtonBox(
+        ctx,
+        layout.reverse,
+        ui.pressedButtons.has('reverse') || powertrain.gear === REVERSE_GEAR,
+      )
+      drawLabel(ctx, layout.reverse, 'RE', 0.42)
+      drawButtonBox(
+        ctx,
+        layout.neutral,
+        ui.pressedButtons.has('neutral') || powertrain.gear === NEUTRAL_GEAR,
+      )
+      drawLabel(ctx, layout.neutral, 'N', 0.42)
+      break
+  }
+}
 
-  drawButtonBox(
-    ctx,
-    layout.neutral,
-    ui.pressedButtons.has('neutral') || powertrain.gear === NEUTRAL_GEAR,
-  )
-  drawLabel(ctx, layout.neutral, 'N', 0.34)
+/**
+ * The H gate: slots cut into a plate, with the lever sitting wherever the
+ * drag left it. The slots are drawn as the path the lever may take, which is
+ * also exactly the path the input layer allows.
+ */
+function drawGate(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, ui } = context
+  const { gate } = layout
+  const geometry = gateGeometry(layout, ui.forwardGears)
+  const slot = Math.max(6, geometry.knobRadius * 0.85)
 
-  drawButtonBox(
-    ctx,
-    layout.ignition,
-    ui.pressedButtons.has('ignition') || powertrain.stalled,
-  )
-  drawLabel(ctx, layout.ignition, 'PARTIDA', 0.26)
+  ctx.fillStyle = PANEL_FILL
+  ctx.strokeStyle = PANEL_STROKE
+  ctx.lineWidth = 1.5
+  roundedRectPath(ctx, gate.x, gate.y, gate.width, gate.height, gate.height * 0.16)
+  ctx.fill()
+  ctx.stroke()
+
+  // The corridor, then a lane wherever there is a gear to reach.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.30)'
+  const firstX = geometry.firstColumnX
+  const lastX = geometry.firstColumnX + (geometry.columns - 1) * geometry.columnSpacing
+  roundedRectPath(ctx, firstX - slot, geometry.corridorY - slot, lastX - firstX + slot * 2, slot * 2, slot)
+  ctx.fill()
+  for (let column = 0; column < geometry.columns; column++) {
+    const x = geometry.firstColumnX + column * geometry.columnSpacing
+    for (const side of [-1, 1]) {
+      if (gateGear(column, side, ui.forwardGears) === null) continue
+      const top = side < 0 ? geometry.corridorY - geometry.laneReach : geometry.corridorY
+      roundedRectPath(ctx, x - slot, top - slot, slot * 2, geometry.laneReach + slot * 2, slot)
+      ctx.fill()
+    }
+  }
+
+  // Gear numbers at the end of each lane, and N over the corridor.
+  const labelSize = Math.max(9, geometry.knobRadius * 0.95)
+  ctx.font = `600 ${labelSize.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  for (let column = 0; column < geometry.columns; column++) {
+    const x = geometry.firstColumnX + column * geometry.columnSpacing
+    for (const side of [-1, 1]) {
+      const gear = gateGear(column, side, ui.forwardGears)
+      if (gear === null) continue
+      ctx.fillStyle = gear === ui.gear ? '#9ecbff' : GLYPH
+      ctx.fillText(
+        gearLabel(gear),
+        x,
+        geometry.corridorY + side * (geometry.laneReach + geometry.knobRadius * 1.15),
+      )
+    }
+  }
+  ctx.fillStyle = ui.gear === NEUTRAL_GEAR ? '#9ecbff' : 'rgba(226, 236, 245, 0.5)'
+  ctx.fillText('N', lastX + geometry.columnSpacing * 0.42, geometry.corridorY)
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+
+  // The lever itself.
+  const knobX = geometry.firstColumnX + ui.shifter.column * geometry.columnSpacing
+  const knobY = geometry.corridorY + ui.shifter.lane * geometry.laneReach
+  ctx.beginPath()
+  ctx.arc(knobX, knobY, geometry.knobRadius, 0, Math.PI * 2)
+  ctx.fillStyle = ui.shifter.blocked
+    ? 'rgba(226, 120, 110, 0.85)'
+    : ui.shifter.dragging
+      ? 'rgba(150, 200, 255, 0.9)'
+      : 'rgba(220, 232, 244, 0.72)'
+  ctx.fill()
+  ctx.strokeStyle = PANEL_STROKE
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+}
+
+/** Master volume: a bar that fills to wherever the finger last left it. */
+function drawVolume(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, ui } = context
+  const rect = layout.volume
+  const barHeight = rect.height * 0.34
+  const bar: Rect = {
+    x: rect.x,
+    y: rect.y + (rect.height - barHeight) / 2,
+    width: rect.width,
+    height: barHeight,
+  }
+  const radius = barHeight / 2
+
+  ctx.save()
+  roundedRectPath(ctx, bar.x, bar.y, bar.width, bar.height, radius)
+  ctx.fillStyle = PANEL_FILL
+  ctx.fill()
+  ctx.clip()
+  ctx.fillStyle = ui.muted ? 'rgba(226, 120, 110, 0.4)' : FILL_LEVEL
+  ctx.fillRect(bar.x, bar.y, bar.width * clamp(ui.volume, 0, 1), bar.height)
+  ctx.restore()
+
+  ctx.strokeStyle = PANEL_STROKE
+  ctx.lineWidth = 1.5
+  roundedRectPath(ctx, bar.x, bar.y, bar.width, bar.height, radius)
+  ctx.stroke()
+
+  const knobX = bar.x + bar.width * clamp(ui.volume, 0, 1)
+  ctx.beginPath()
+  ctx.arc(knobX, bar.y + bar.height / 2, barHeight * 0.78, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(220, 232, 244, 0.72)'
+  ctx.fill()
+  ctx.stroke()
+}
+
+/** Vertical caption for a tall, narrow pedal. */
+function drawRotatedLabel(ctx: CanvasRenderingContext2D, rect: Rect, label: string): void {
+  ctx.save()
+  ctx.translate(rect.x + rect.width / 2, rect.y + rect.height / 2)
+  ctx.rotate(-Math.PI / 2)
+  drawLabel(ctx, { x: -rect.height / 2, y: -rect.width / 2, width: rect.height, height: rect.width }, label, 0.34)
+  ctx.restore()
 }
 
 /** Centred caption, shrunk to fit rather than spilling out of its button. */
@@ -391,12 +523,15 @@ const KEYBOARD_LINES: readonly string[] = [
 const TOUCH_LINES: readonly string[] = [
   'barra a esquerda   estercar',
   'pedais a direita   acelerar / frear',
-  'EMBREAGEM          embreagem (segure)',
+  'EMBREAGEM          pedal alto a esquerda:',
+  '                   o dedo e o curso',
+  'faixa clara        ponto de friccao',
   'MAO                freio de mao',
-  'MARCHA + / -       trocar marcha',
-  'RE / N             re e ponto morto',
+  'cambio no meio     arraste o manete pelo H',
+  '                   (corredor no centro = N)',
   'AUT SEQ MAN        modo do cambio',
   'PARTIDA            religar o motor',
+  'barra no topo      volume',
   'botoes no topo     controles, mudo, tela cheia',
 ]
 

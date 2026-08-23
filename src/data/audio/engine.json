@@ -1,6 +1,13 @@
 {
   "cylinders": 4,
-  "masterGain": 0.5,
+  "masterGain": 0.9,
+  "compressor": {
+    "thresholdDb": -20,
+    "kneeDb": 24,
+    "ratio": 8,
+    "attack": 0.004,
+    "release": 0.24
+  },
   "harmonics": [
     { "ratio": 1, "wave": "sawtooth", "gain": 1.0, "detune": 0 },
     { "ratio": 2, "wave": "sawtooth", "gain": 0.62, "detune": 0 },
@@ -8,21 +15,21 @@
     { "ratio": 4, "wave": "sawtooth", "gain": 0.16, "detune": 6 }
   ],
   "noise": {
-    "gain": 0.4,
-    "centreRatio": 6.0,
-    "minHz": 110,
+    "gain": 0.5,
+    "centreRatio": 12.0,
+    "minHz": 260,
     "maxHz": 2400,
     "q": 1.1
   },
   "lowpass": {
-    "baseHz": 420,
+    "baseHz": 1300,
     "loadHz": 3000,
-    "minHarmonic": 3.5,
+    "minHarmonic": 8,
     "q": 0.9,
     "maxHz": 12000
   },
   "gain": {
-    "idle": 0.34,
+    "idle": 0.5,
     "rpmSpan": 0.42,
     "loadSpan": 0.34
   },
