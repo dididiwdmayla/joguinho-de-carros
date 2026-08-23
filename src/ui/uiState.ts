@@ -11,6 +11,7 @@ export type UiButton =
   | 'neutral'
   | 'ignition'
   | 'mode'
+  | 'mute'
 
 export interface UiState {
   /** Touch control layer. Hidden by default when there is no touch screen. */
@@ -18,6 +19,8 @@ export interface UiState {
   /** First-run instructions, dismissed by the first key or touch. */
   instructionsVisible: boolean
   debugVisible: boolean
+  /** Sound switch. The audio layer reads it; nothing else does. */
+  muted: boolean
   fullscreenActive: boolean
   /** True once the orientation could actually be locked to landscape. */
   orientationLocked: boolean
@@ -37,6 +40,7 @@ export function createUiState(controlsVisible: boolean): UiState {
     controlsVisible,
     instructionsVisible: true,
     debugVisible: false,
+    muted: false,
     fullscreenActive: false,
     orientationLocked: false,
     rotateHintVisible: false,

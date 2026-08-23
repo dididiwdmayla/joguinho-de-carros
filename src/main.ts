@@ -9,8 +9,11 @@
  * readable text on the canvas, naming what was being loaded.
  */
 import manifestUrl from './data/assets.json?url'
+import engineAudioUrl from './data/audio/engine.json?url'
 import playerSedanUrl from './data/cars/player_sedan.json?url'
 
+import { loadEngineAudioParams } from './audio/audioParams'
+import { createEngineAudio, setEngineAudioAudible, startEngineAudio } from './audio/engineAudio'
 import { loadSprites } from './assets/loader'
 import { loadManifest, spriteKeyForPath } from './assets/manifest'
 import { describeError, drawBootMessage } from './game/bootScreen'
@@ -91,12 +94,27 @@ async function boot(surface: Screen): Promise<void> {
     `imagens (${manifest.sprites[playerSpriteKey]?.path ?? playerSpriteKey}, ` +
       `${manifest.sprites[GROUND_SPRITE_KEY]?.path ?? GROUND_SPRITE_KEY})`,
   )
+  const audioParams = await withTimeout(
+    loadEngineAudioParams(engineAudioUrl, 'engine.json'),
+    'parametros de audio (engine.json)',
+  )
+
+  // Built now, opened later: no browser lets a page make a sound before the
+  // player has touched it, so until then the game simply runs in silence.
+  const audio = createEngineAudio(audioParams, {
+    idleRpm: car.powertrain.idleRpm,
+    maxRpm: car.powertrain.maxRpm,
+  })
 
   const ui = createUiState(prefersTouchControls())
   const input = new InputManager({
     canvas: surface.canvas,
     viewport: surface.viewport,
     ui,
+    // Runs inside the event handler, which is the only place a device opens.
+    onUserGesture: () => {
+      startEngineAudio(audio)
+    },
     onFullscreenRequest: () => {
       // Must run inside the gesture handler, so it is called straight through.
       toggleFullscreen(document.documentElement)
@@ -110,6 +128,11 @@ async function boot(surface: Screen): Promise<void> {
     ui.fullscreenActive = isFullscreen()
     if (!ui.fullscreenActive) ui.orientationLocked = false
   })
+  // A hidden tab stops getting frames, so whatever note the engine was on
+  // would hang there until the player came back. Fade it out instead.
+  document.addEventListener('visibilitychange', () => {
+    setEngineAudioAudible(audio, !document.hidden)
+  })
 
   const state = createGameState({
     canvas: surface.canvas,
@@ -119,6 +142,7 @@ async function boot(surface: Screen): Promise<void> {
     input,
     ui,
     car,
+    audio,
     playerSpriteKey,
     groundSpriteKey: GROUND_SPRITE_KEY,
   })

@@ -54,6 +54,9 @@ function drawButtons(context: RenderContext, layout: TouchLayout): void {
   drawButtonBox(ctx, layout.debugButton, ui.pressedButtons.has('debug'))
   drawDebugGlyph(ctx, layout.debugButton)
 
+  drawButtonBox(ctx, layout.muteButton, ui.pressedButtons.has('mute'))
+  drawMuteGlyph(ctx, layout.muteButton, ui.muted)
+
   if (ui.controlsVisible) {
     drawButtonBox(ctx, layout.fullscreenButton, ui.pressedButtons.has('fullscreen'))
     drawFullscreenGlyph(ctx, layout.fullscreenButton, ui.fullscreenActive)
@@ -96,6 +99,41 @@ function drawDebugGlyph(ctx: CanvasRenderingContext2D, rect: Rect): void {
   ctx.fillText('0.0', rect.x + rect.width / 2, rect.y + rect.height / 2)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
+}
+
+/** A speaker, with the sound crossed out when it is off. */
+function drawMuteGlyph(ctx: CanvasRenderingContext2D, rect: Rect, muted: boolean): void {
+  const cx = rect.x + rect.width / 2
+  const cy = rect.y + rect.height / 2
+  const size = rect.width * 0.3
+
+  ctx.fillStyle = GLYPH
+  ctx.beginPath()
+  ctx.moveTo(cx - size * 0.9, cy - size * 0.32)
+  ctx.lineTo(cx - size * 0.45, cy - size * 0.32)
+  ctx.lineTo(cx + size * 0.1, cy - size * 0.85)
+  ctx.lineTo(cx + size * 0.1, cy + size * 0.85)
+  ctx.lineTo(cx - size * 0.45, cy + size * 0.32)
+  ctx.lineTo(cx - size * 0.9, cy + size * 0.32)
+  ctx.closePath()
+  ctx.fill()
+
+  ctx.strokeStyle = GLYPH
+  ctx.lineWidth = Math.max(1.5, rect.width * 0.055)
+  if (muted) {
+    ctx.beginPath()
+    ctx.moveTo(cx + size * 0.42, cy - size * 0.45)
+    ctx.lineTo(cx + size * 1.05, cy + size * 0.45)
+    ctx.moveTo(cx + size * 1.05, cy - size * 0.45)
+    ctx.lineTo(cx + size * 0.42, cy + size * 0.45)
+    ctx.stroke()
+    return
+  }
+  for (const radius of [size * 0.55, size * 0.95]) {
+    ctx.beginPath()
+    ctx.arc(cx + size * 0.15, cy, radius, -Math.PI * 0.32, Math.PI * 0.32)
+    ctx.stroke()
+  }
 }
 
 /** Four corner brackets, pointing out to enter and in to leave. */
@@ -346,6 +384,7 @@ const KEYBOARD_LINES: readonly string[] = [
   'X                  re',
   'R                  dar partida',
   'T                  cambio: auto, seq, manual',
+  'M                  mudo',
   'F3 ou `            debug',
 ]
 
@@ -358,7 +397,7 @@ const TOUCH_LINES: readonly string[] = [
   'RE / N             re e ponto morto',
   'AUT SEQ MAN        modo do cambio',
   'PARTIDA            religar o motor',
-  'botoes no topo     controles, tela cheia',
+  'botoes no topo     controles, mudo, tela cheia',
 ]
 
 const INSTRUCTION_FOOTER = 'toque na tela ou pressione uma tecla'
@@ -376,7 +415,7 @@ function drawInstructions(context: RenderContext): void {
 
     // Height first, then shrink again if the two columns are too wide for the
     // screen. Everything scales with the font, so one correction is exact.
-    let size = clamp(usableHeight * 0.05, 8, 17)
+    let size = clamp(usableHeight / (1.5 * (rows + 3)), 8, 17)
     let columnWidth = 0
     const measure = (): number => {
       ctx.font = `${size.toFixed(1)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`

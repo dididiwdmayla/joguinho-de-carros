@@ -1,0 +1,59 @@
+{
+  "cylinders": 4,
+  "masterGain": 0.5,
+  "harmonics": [
+    { "ratio": 1, "wave": "sawtooth", "gain": 1.0, "detune": 0 },
+    { "ratio": 2, "wave": "sawtooth", "gain": 0.62, "detune": 0 },
+    { "ratio": 3, "wave": "square", "gain": 0.3, "detune": 0 },
+    { "ratio": 4, "wave": "sawtooth", "gain": 0.16, "detune": 6 }
+  ],
+  "noise": {
+    "gain": 0.4,
+    "centreRatio": 6.0,
+    "minHz": 110,
+    "maxHz": 2400,
+    "q": 1.1
+  },
+  "lowpass": {
+    "baseHz": 420,
+    "loadHz": 3000,
+    "minHarmonic": 3.5,
+    "q": 0.9,
+    "maxHz": 12000
+  },
+  "gain": {
+    "idle": 0.34,
+    "rpmSpan": 0.42,
+    "loadSpan": 0.34
+  },
+  "spin": {
+    "gain": 0.5,
+    "centreHz": 2600,
+    "q": 1.4,
+    "slipReference": 4.0
+  },
+  "clutch": {
+    "minDeltaRpm": 140,
+    "fullDeltaRpm": 900,
+    "biteReference": 0.3,
+    "depth": 0.34,
+    "muffle": 0.45,
+    "minHz": 4,
+    "maxHz": 26
+  },
+  "shift": {
+    "gainDrop": 0.55
+  },
+  "stall": {
+    "duration": 0.55,
+    "coughAt": 0.34,
+    "coughWidth": 0.13,
+    "coughRpm": 0.22,
+    "coughGain": 0.55
+  },
+  "smoothing": {
+    "frequency": 0.018,
+    "gain": 0.025,
+    "filter": 0.045
+  }
+}
