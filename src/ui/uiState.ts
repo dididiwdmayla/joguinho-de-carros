@@ -1,6 +1,16 @@
 /** Screen-layer state: what is on show and what is being pressed right now. */
 
-export type UiButton = 'controls' | 'fullscreen' | 'debug'
+export type UiButton =
+  | 'controls'
+  | 'fullscreen'
+  | 'debug'
+  | 'clutch'
+  | 'gearUp'
+  | 'gearDown'
+  | 'reverse'
+  | 'neutral'
+  | 'ignition'
+  | 'mode'
 
 export interface UiState {
   /** Touch control layer. Hidden by default when there is no touch screen. */
@@ -13,8 +23,11 @@ export interface UiState {
   orientationLocked: boolean
   /** Asks the player to rotate when the lock is unavailable and we are upright. */
   rotateHintVisible: boolean
-  /** Button currently held down, for the pressed state. */
-  pressedButton: UiButton | null
+  /**
+   * Buttons held down right now. A set rather than one slot, because the
+   * gearbox controls are meant to be used with a thumb already on a pedal.
+   */
+  readonly pressedButtons: Set<UiButton>
   /** True while a finger owns the steering control. */
   steeringActive: boolean
 }
@@ -27,7 +40,7 @@ export function createUiState(controlsVisible: boolean): UiState {
     fullscreenActive: false,
     orientationLocked: false,
     rotateHintVisible: false,
-    pressedButton: null,
+    pressedButtons: new Set<UiButton>(),
     steeringActive: false,
   }
 }

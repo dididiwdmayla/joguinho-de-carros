@@ -10,6 +10,12 @@ import { GRAVITY } from '../core/constants'
 import { clamp, lerp, signum, wrapAngle } from '../core/math'
 import type { InputState } from '../input/input'
 import type { CarParams } from './carParams'
+import {
+  createPowertrainTelemetry,
+  stepPowertrain,
+  type PowertrainState,
+  type PowertrainTelemetry,
+} from './powertrain'
 import type { VehicleState } from './vehicleState'
 
 /**
@@ -39,9 +45,13 @@ export interface VehicleTelemetry {
   blend: number
   /** Longitudinal acceleration of this step [m/s^2]. */
   longitudinalAcceleration: number
+  /** Total longitudinal force of this step [N]. */
+  longitudinalForce: number
+  /** Engine, clutch and gearbox readouts. */
+  readonly powertrain: PowertrainTelemetry
 }
 
-export function createTelemetry(): VehicleTelemetry {
+export function createTelemetry(powertrain: PowertrainState): VehicleTelemetry {
   return {
     speed: 0,
     slipFront: 0,
@@ -52,6 +62,8 @@ export function createTelemetry(): VehicleTelemetry {
     lateralRear: 0,
     blend: 0,
     longitudinalAcceleration: 0,
+    longitudinalForce: 0,
+    powertrain: createPowertrainTelemetry(powertrain.mode),
   }
 }
 
@@ -62,6 +74,7 @@ export function createTelemetry(): VehicleTelemetry {
 export function stepVehicle(
   state: VehicleState,
   params: CarParams,
+  powertrain: PowertrainState,
   input: InputState,
   dt: number,
   telemetry: VehicleTelemetry,
@@ -106,15 +119,29 @@ export function stepVehicle(
   const lateralRear = -clamp(params.corneringStiffnessRear * slipRear, -gripRear, gripRear)
 
   // --- 4. Longitudinal force ----------------------------------------------
-  // No engine and no gearbox yet: the throttle is direct force at the wheels.
-  const throttle = clamp(input.throttle, 0, 1)
   // Until the rear axle gets a proper lock model, the handbrake is simply a
   // full brake application.
   const brake = Math.max(clamp(input.brake, 0, 1), input.handbrake ? 1 : 0)
-  let longitudinalForce = throttle * params.maxDriveForce
-  longitudinalForce -= travelSign * brake * params.maxBrakeForce // brakes oppose travel
-  longitudinalForce -= params.dragCoefficient * state.vx * forwardSpeed // aero drag ~ v^2
-  longitudinalForce -= params.rollingResistance * state.vx // rolling resistance ~ v
+  // Everything that slows the car down whatever the engine is doing. The
+  // powertrain is handed these too: it has to know how fast the car itself
+  // will be going next step to work out how much the wheels are outrunning it.
+  const resistForce =
+    -travelSign * brake * params.maxBrakeForce - // brakes oppose travel
+    params.dragCoefficient * state.vx * forwardSpeed - // aero drag ~ v^2
+    params.rollingResistance * state.vx // rolling resistance ~ v
+
+  // Drive comes out of the engine, through the clutch, the gear and the
+  // differential, and is capped by the grip the driven axle actually has.
+  const driveForce = stepPowertrain(
+    powertrain,
+    params.powertrain,
+    { throttle: clamp(input.throttle, 0, 1), clutchPress: clamp(input.clutchPress, 0, 1) },
+    { vx: state.vx, tractionLimit: gripRear, resistForce, mass: params.mass },
+    dt,
+    telemetry.powertrain,
+  )
+
+  const longitudinalForce = driveForce + resistForce
   const ax = longitudinalForce / params.mass
 
   // --- 5. Integrate in the body frame -------------------------------------
@@ -175,4 +202,5 @@ export function stepVehicle(
   telemetry.lateralRear = lateralRear
   telemetry.blend = blend
   telemetry.longitudinalAcceleration = state.ax
+  telemetry.longitudinalForce = longitudinalForce
 }
