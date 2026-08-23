@@ -36,6 +36,12 @@ export interface CarParams {
   readonly length: number
   /** Body width [m]. */
   readonly width: number
+  /** Tyre width [m]. */
+  readonly wheelWidth: number
+  /** Tyre diameter [m], the footprint's length along the rolling direction. */
+  readonly wheelDiameter: number
+  /** Distance between the centres of the left and right tyres [m]. */
+  readonly trackWidth: number
   /** Art path, resolved against the asset manifest. */
   readonly sprite: string
 
@@ -66,6 +72,9 @@ const NUMERIC_FIELDS = [
   'rollingResistance',
   'length',
   'width',
+  'wheelWidth',
+  'wheelDiameter',
+  'trackWidth',
 ] as const
 
 type NumericField = (typeof NUMERIC_FIELDS)[number]

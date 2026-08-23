@@ -8,13 +8,13 @@ export const SHADOW_OFFSET_Y = 0.28
 /** Shadow size relative to the body footprint. */
 export const SHADOW_SCALE = 0.48
 
-/** Front wheels, drawn in code so the steering angle is readable. */
-export const WHEEL_LENGTH = 0.62
-export const WHEEL_WIDTH = 0.21
-export const WHEEL_CORNER_RADIUS = 0.07
-/** Wheel track as a fraction of the body width. */
-export const WHEEL_TRACK_FRACTION = 0.86
-export const WHEEL_COLOR = '#191c21'
+/**
+ * Wheels are drawn in code, under the body sprite. Their size and track come
+ * from the car file; only the look lives here.
+ */
+export const WHEEL_COLOR = '#15171b'
+/** Corner rounding as a fraction of the tyre width. */
+export const WHEEL_CORNER_FRACTION = 0.34
 
 /** Ground colour behind the tiles, only visible for a frame while loading. */
 export const VOID_COLOR = '#14161a'

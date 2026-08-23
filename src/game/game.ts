@@ -8,30 +8,48 @@
  */
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from '../core/constants'
 import { clamp, lerp, lerpAngle } from '../core/math'
+import type { DebugFrame } from '../debug/debugFrame'
 import { copyCameraState, stepCamera } from '../render/camera'
 import { renderFrame } from '../render/renderer'
 import type { RenderContext } from '../render/scene'
 import { syncViewport } from '../render/viewport'
 import { stepVehicle } from '../vehicle/physics'
 import { copyVehicleState } from '../vehicle/vehicleState'
-import type { DebugFrame } from '../debug/debugFrame'
 import type { GameState } from './state'
 
 /** Weight of one frame in the smoothed fps readout. */
 const FPS_SMOOTHING = 0.08
 
+export interface GameCallbacks {
+  /** Called once if a frame throws, so the failure reaches the screen. */
+  onFatalError: (error: unknown) => void
+}
+
 /** Starts the loop and returns a function that stops it. */
-export function startGame(state: GameState): () => void {
+export function startGame(state: GameState, callbacks: GameCallbacks): () => void {
+  let stopped = false
   let handle = requestAnimationFrame(function frame(timestamp: number): void {
+    if (stopped) return
     handle = requestAnimationFrame(frame)
-    advanceFrame(state, timestamp)
+    try {
+      advanceFrame(state, timestamp)
+    } catch (error: unknown) {
+      // A throw inside requestAnimationFrame is invisible: the browser keeps
+      // calling us and the canvas keeps whatever was drawn last, which reads
+      // as a frozen game. Stop and hand the error over to be painted.
+      stopped = true
+      cancelAnimationFrame(handle)
+      callbacks.onFatalError(error)
+    }
   })
-  return () => cancelAnimationFrame(handle)
+  return () => {
+    stopped = true
+    cancelAnimationFrame(handle)
+  }
 }
 
 function advanceFrame(state: GameState, timestamp: number): void {
   syncViewport(state.canvas, state.viewport)
-  if (state.input.consumeDebugToggle()) state.debugVisible = !state.debugVisible
 
   const previous = state.lastTimestamp
   state.lastTimestamp = timestamp
@@ -48,6 +66,13 @@ function advanceFrame(state: GameState, timestamp: number): void {
   // Input is sampled once per frame and reused by every step of that frame.
   const input = state.input.sample()
 
+  // Asking to rotate only makes sense while the on-screen controls are in use
+  // and the browser refused to pin the orientation for us.
+  state.ui.rotateHintVisible =
+    state.ui.controlsVisible &&
+    !state.ui.orientationLocked &&
+    state.viewport.cssHeight > state.viewport.cssWidth
+
   state.accumulator += elapsed
   let steps = 0
   while (state.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
@@ -62,7 +87,8 @@ function advanceFrame(state: GameState, timestamp: number): void {
     steps++
   }
 
-  renderFrame(buildRenderContext(state, clamp(state.accumulator / FIXED_DT, 0, 1)))
+  const alpha = clamp(state.accumulator / FIXED_DT, 0, 1)
+  renderFrame(buildRenderContext(state, input, alpha))
 }
 
 /** Feeds the camera the car's position and its velocity in world axes. */
@@ -76,7 +102,11 @@ function updateFollowTarget(state: GameState): void {
   followTarget.velocityY = vehicle.vx * sinYaw + vehicle.vy * cosYaw
 }
 
-function buildRenderContext(state: GameState, alpha: number): RenderContext {
+function buildRenderContext(
+  state: GameState,
+  input: RenderContext['input'],
+  alpha: number,
+): RenderContext {
   const current = state.vehicle
   const previous = state.vehiclePrevious
   const render = state.playerRender
@@ -89,7 +119,7 @@ function buildRenderContext(state: GameState, alpha: number): RenderContext {
   state.cameraView.x = lerp(state.cameraPrevious.x, state.camera.x, alpha)
   state.cameraView.y = lerp(state.cameraPrevious.y, state.camera.y, alpha)
 
-  const debug: DebugFrame | null = state.debugVisible
+  const debug: DebugFrame | null = state.ui.debugVisible
     ? {
         telemetry: state.telemetry,
         vx: current.vx,
@@ -106,7 +136,8 @@ function buildRenderContext(state: GameState, alpha: number): RenderContext {
     camera: state.cameraView,
     assets: state.assets,
     scene: state.scene,
+    input,
+    ui: state.ui,
     debug,
-    debugCornerVisible: true,
   }
 }
