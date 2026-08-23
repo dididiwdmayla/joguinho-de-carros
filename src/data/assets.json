@@ -1,0 +1,22 @@
+{
+  "sprites": {
+    "player_sedan":  { "path": "assets/cars/player_sedan.png",     "lengthMeters": 4.5, "widthMeters": 1.8 },
+    "parked_hatch":  { "path": "assets/cars/parked_hatch.png",     "lengthMeters": 3.9, "widthMeters": 1.7 },
+    "parked_sedan":  { "path": "assets/cars/parked_sedan.png",     "lengthMeters": 4.6, "widthMeters": 1.8 },
+    "parked_suv":    { "path": "assets/cars/parked_suv.png",       "lengthMeters": 4.7, "widthMeters": 1.9 },
+    "parked_pickup": { "path": "assets/cars/parked_pickup.png",    "lengthMeters": 5.3, "widthMeters": 1.9 },
+    "parked_van":    { "path": "assets/cars/parked_van.png",       "lengthMeters": 5.0, "widthMeters": 2.0 },
+    "cone":          { "path": "assets/props/cone.png",            "lengthMeters": 0.4, "widthMeters": 0.4 },
+    "barrier":       { "path": "assets/props/barrier.png",         "lengthMeters": 2.0, "widthMeters": 0.4 },
+    "curb_block":    { "path": "assets/props/curb_block.png",      "lengthMeters": 1.8, "widthMeters": 0.3 },
+    "planter":       { "path": "assets/props/planter.png",         "lengthMeters": 1.2, "widthMeters": 1.2 },
+    "manhole":       { "path": "assets/decals/manhole.png",        "lengthMeters": 0.7, "widthMeters": 0.7 },
+    "oil_stain":     { "path": "assets/decals/oil_stain.png",      "lengthMeters": 1.5, "widthMeters": 1.0 },
+    "crack":         { "path": "assets/decals/crack.png",          "lengthMeters": 2.0, "widthMeters": 0.6 },
+    "asphalt_tile":  { "path": "assets/ground/asphalt_tile.png",   "lengthMeters": 16,  "widthMeters": 16 },
+    "concrete_tile": { "path": "assets/ground/concrete_tile.png",  "lengthMeters": 16,  "widthMeters": 16 }
+  },
+  "ui": {
+    "dashboard": { "path": "assets/ui/dashboard.png" }
+  }
+}
