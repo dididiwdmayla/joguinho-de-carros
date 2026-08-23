@@ -14,6 +14,7 @@ import { renderFrame } from '../render/renderer'
 import type { RenderContext } from '../render/scene'
 import { syncViewport } from '../render/viewport'
 import { stepVehicle } from '../vehicle/physics'
+import { applyPowertrainCommand, transmissionModeLabel } from '../vehicle/powertrain'
 import { copyVehicleState } from '../vehicle/vehicleState'
 import type { GameState } from './state'
 
@@ -66,6 +67,12 @@ function advanceFrame(state: GameState, timestamp: number): void {
   // Input is sampled once per frame and reused by every step of that frame.
   const input = state.input.sample()
 
+  // Gear changes and the like act once, before the steps that follow: pressing
+  // a key must never mean two gears because the frame ran long.
+  for (const command of state.input.drainCommands()) {
+    applyPowertrainCommand(state.powertrain, state.car.powertrain, command, state.vehicle.vx)
+  }
+
   // Asking to rotate only makes sense while the on-screen controls are in use
   // and the browser refused to pin the orientation for us.
   state.ui.rotateHintVisible =
@@ -79,7 +86,7 @@ function advanceFrame(state: GameState, timestamp: number): void {
     copyVehicleState(state.vehicle, state.vehiclePrevious)
     copyCameraState(state.camera, state.cameraPrevious)
 
-    stepVehicle(state.vehicle, state.car, input, FIXED_DT, state.telemetry)
+    stepVehicle(state.vehicle, state.car, state.powertrain, input, FIXED_DT, state.telemetry)
     updateFollowTarget(state)
     stepCamera(state.camera, state.followTarget, FIXED_DT)
 
@@ -119,6 +126,12 @@ function buildRenderContext(
   state.cameraView.x = lerp(state.cameraPrevious.x, state.camera.x, alpha)
   state.cameraView.y = lerp(state.cameraPrevious.y, state.camera.y, alpha)
 
+  const readout = state.powertrainReadout
+  readout.modeLabel = transmissionModeLabel(state.powertrain.mode)
+  readout.clutch = state.powertrain.clutch
+  readout.gear = state.powertrain.gear
+  readout.stalled = state.powertrain.stalled
+
   const debug: DebugFrame | null = state.ui.debugVisible
     ? {
         telemetry: state.telemetry,
@@ -139,5 +152,6 @@ function buildRenderContext(
     input,
     ui: state.ui,
     debug,
+    powertrain: readout,
   }
 }

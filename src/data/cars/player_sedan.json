@@ -9,7 +9,6 @@
   "mu": 0.9,
   "maxSteerAngle": 0.61,
   "steerRate": 2.5,
-  "maxDriveForce": 6000,
   "maxBrakeForce": 9000,
   "dragCoefficient": 0.42,
   "rollingResistance": 12.0,
@@ -18,5 +17,39 @@
   "wheelWidth": 0.18,
   "wheelDiameter": 0.42,
   "trackWidth": 1.38,
-  "sprite": "cars/player_sedan.png"
+  "sprite": "cars/player_sedan.png",
+  "powertrain": {
+    "torqueCurve": [
+      [800, 95],
+      [1500, 145],
+      [2500, 175],
+      [3500, 190],
+      [4500, 195],
+      [5500, 180],
+      [6500, 150],
+      [7000, 120]
+    ],
+    "idleRpm": 850,
+    "stallRpm": 450,
+    "maxRpm": 7000,
+    "engineInertia": 0.25,
+    "engineBraking": 0.035,
+    "clutchStiffness": 0.9,
+    "clutchMaxTorque": 320,
+    "clutchPressRate": 3.2,
+    "clutchReleaseRate": 0.5,
+    "wheelRadius": 0.31,
+    "wheelInertia": 1.8,
+    "drivelineInertia": 0.05,
+    "gearRatios": [3.55, 2.05, 1.38, 1.03, 0.82, 0.68],
+    "reverseRatio": -3.35,
+    "finalDrive": 3.9,
+    "upshiftRpm": 5200,
+    "downshiftRpm": 1700,
+    "automaticShiftTime": 0.25,
+    "sequentialShiftTime": 0.15,
+    "starterTime": 0.4,
+    "autoEngageRpm": 1250,
+    "autoLaunchRpm": 2600
+  }
 }

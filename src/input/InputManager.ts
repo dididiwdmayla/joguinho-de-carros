@@ -2,7 +2,8 @@
  * Keyboard, touch and mouse front-end for InputState.
  *
  * Everything DOM-flavoured about controls lives here. The simulation only ever
- * sees the normalised InputState returned by `sample()`.
+ * sees the normalised InputState returned by `sample()` and the queue of
+ * discrete actions returned by `drainCommands()`.
  *
  * Touches are tracked one by one, keyed by their identifier, so steering with
  * one thumb while the other holds the throttle is just two independent
@@ -17,12 +18,26 @@ import {
   type TouchLayout,
 } from '../ui/touchLayout'
 import type { UiButton, UiState } from '../ui/uiState'
+import type { PowertrainCommand } from '../vehicle/powertrain'
 import { createInputState, type InputState } from './input'
 
 /** Pedal reading at the shallow edge, so a light press still does something. */
 const PEDAL_FLOOR = 0.25
 
 type ControlId = 'steering' | 'throttle' | 'brake' | 'handbrake' | UiButton
+
+/** Buttons that act once when touched, rather than being held. */
+const MOMENTARY: ReadonlySet<ControlId> = new Set<ControlId>([
+  'controls',
+  'fullscreen',
+  'debug',
+  'gearUp',
+  'gearDown',
+  'reverse',
+  'neutral',
+  'ignition',
+  'mode',
+])
 
 /** Identifier used for the mouse, which never collides with a touch id. */
 const MOUSE_POINTER_ID = -1
@@ -50,6 +65,7 @@ export class InputManager {
   private readonly state: InputState = createInputState()
   private readonly keys = new Set<string>()
   private readonly pointers = new Map<number, ActivePointer>()
+  private commands: PowertrainCommand[] = []
 
   constructor(options: InputManagerOptions) {
     this.canvas = options.canvas
@@ -96,6 +112,7 @@ export class InputManager {
     let pointerSteer = 0
     let steering = false
     let pointerHandbrake = false
+    let pointerClutch = false
     for (const pointer of this.pointers.values()) {
       switch (pointer.control) {
         case 'steering':
@@ -111,6 +128,9 @@ export class InputManager {
         case 'handbrake':
           pointerHandbrake = true
           break
+        case 'clutch':
+          pointerClutch = true
+          break
         default:
           break
       }
@@ -121,7 +141,22 @@ export class InputManager {
     this.state.brake = Math.max(keyBrake, pointerBrake)
     this.state.steer = steering ? pointerSteer : keySteer
     this.state.handbrake = this.keys.has('Space') || pointerHandbrake
+    // The touch button behaves exactly like the key: the pedal itself travels
+    // at its own rate inside the powertrain, this only says it is being held.
+    this.state.clutchPress = this.keys.has('KeyC') || pointerClutch ? 1 : 0
     return this.state
+  }
+
+  /**
+   * Hands over the gear changes, starter presses and mode switches collected
+   * since the last call, and forgets them. Called once per frame: a press must
+   * act once, however many physics steps that frame turns out to run.
+   */
+  drainCommands(): readonly PowertrainCommand[] {
+    if (this.commands.length === 0) return EMPTY_COMMANDS
+    const drained = this.commands
+    this.commands = []
+    return drained
   }
 
   private anyKey(...codes: readonly string[]): boolean {
@@ -144,6 +179,13 @@ export class InputManager {
       event.preventDefault()
       return
     }
+    const command = COMMAND_KEYS[event.code]
+    if (command !== undefined) {
+      // Held keys must not repeat: one press is one gear.
+      if (!event.repeat) this.commands.push(command)
+      event.preventDefault()
+      return
+    }
     if (CONTROL_KEYS.has(event.code)) {
       this.keys.add(event.code)
       event.preventDefault()
@@ -158,7 +200,7 @@ export class InputManager {
   private readonly onBlur = (): void => {
     this.keys.clear()
     this.pointers.clear()
-    this.ui.pressedButton = null
+    this.ui.pressedButtons.clear()
   }
 
   // ------------------------------------------------------------------- touch
@@ -214,13 +256,14 @@ export class InputManager {
     const control = this.hitTest(x, y)
     if (control === null) return
 
-    if (control === 'controls' || control === 'fullscreen' || control === 'debug') {
-      this.ui.pressedButton = control
+    if (MOMENTARY.has(control)) {
+      this.ui.pressedButtons.add(control as UiButton)
       this.pointers.set(id, { control, steer: 0, throttle: 0, brake: 0 })
-      this.activateButton(control)
+      this.activateButton(control as UiButton)
       return
     }
 
+    if (control === 'clutch') this.ui.pressedButtons.add('clutch')
     const pointer: ActivePointer = { control, steer: 0, throttle: 0, brake: 0 }
     this.updatePointer(pointer, x, y)
     this.pointers.set(id, pointer)
@@ -235,7 +278,7 @@ export class InputManager {
   private endPointer(id: number): void {
     const pointer = this.pointers.get(id)
     if (pointer === undefined) return
-    if (this.ui.pressedButton === pointer.control) this.ui.pressedButton = null
+    this.ui.pressedButtons.delete(pointer.control as UiButton)
     this.pointers.delete(id)
   }
 
@@ -245,13 +288,33 @@ export class InputManager {
         this.ui.controlsVisible = !this.ui.controlsVisible
         // Releasing the layer must not leave a pedal held down.
         this.pointers.clear()
-        this.ui.pressedButton = null
+        this.ui.pressedButtons.clear()
         break
       case 'debug':
         this.ui.debugVisible = !this.ui.debugVisible
         break
       case 'fullscreen':
         this.onFullscreenRequest()
+        break
+      case 'gearUp':
+        this.commands.push({ kind: 'shiftUp' })
+        break
+      case 'gearDown':
+        this.commands.push({ kind: 'shiftDown' })
+        break
+      case 'reverse':
+        this.commands.push({ kind: 'selectGear', gear: -1 })
+        break
+      case 'neutral':
+        this.commands.push({ kind: 'selectGear', gear: 0 })
+        break
+      case 'ignition':
+        this.commands.push({ kind: 'start' })
+        break
+      case 'mode':
+        this.commands.push({ kind: 'cycleMode' })
+        break
+      default:
         break
     }
   }
@@ -267,6 +330,14 @@ export class InputManager {
     if (containsPoint(layout.handbrake, x, y)) return 'handbrake'
     if (containsPoint(layout.throttle, x, y)) return 'throttle'
     if (containsPoint(layout.brake, x, y)) return 'brake'
+    if (containsPoint(layout.gearUp, x, y)) return 'gearUp'
+    if (containsPoint(layout.gearDown, x, y)) return 'gearDown'
+    if (containsPoint(layout.mode, x, y)) return 'mode'
+    if (containsPoint(layout.reverse, x, y)) return 'reverse'
+    if (containsPoint(layout.neutral, x, y)) return 'neutral'
+    if (containsPoint(layout.ignition, x, y)) return 'ignition'
+    // Before the steering bar: its grab area reaches up towards the clutch.
+    if (containsPoint(layout.clutch, x, y)) return 'clutch'
     if (containsPoint(layout.steeringGrab, x, y)) return 'steering'
     return null
   }
@@ -302,6 +373,8 @@ function pedalAmount(rect: Rect, y: number, direction: 'up' | 'down'): number {
   return PEDAL_FLOOR + (1 - PEDAL_FLOOR) * ratio
 }
 
+const EMPTY_COMMANDS: readonly PowertrainCommand[] = []
+
 const CONTROL_KEYS: ReadonlySet<string> = new Set<string>([
   'KeyW',
   'KeyA',
@@ -312,4 +385,22 @@ const CONTROL_KEYS: ReadonlySet<string> = new Set<string>([
   'ArrowLeft',
   'ArrowRight',
   'Space',
+  'KeyC',
 ])
+
+/** Keys that fire once per press. R turns the key, T walks the modes. */
+const COMMAND_KEYS: Readonly<Record<string, PowertrainCommand>> = {
+  KeyE: { kind: 'shiftUp' },
+  KeyQ: { kind: 'shiftDown' },
+  KeyR: { kind: 'start' },
+  KeyT: { kind: 'cycleMode' },
+  KeyN: { kind: 'selectGear', gear: 0 },
+  KeyX: { kind: 'selectGear', gear: -1 },
+  Digit0: { kind: 'selectGear', gear: 0 },
+  Digit1: { kind: 'selectGear', gear: 1 },
+  Digit2: { kind: 'selectGear', gear: 2 },
+  Digit3: { kind: 'selectGear', gear: 3 },
+  Digit4: { kind: 'selectGear', gear: 4 },
+  Digit5: { kind: 'selectGear', gear: 5 },
+  Digit6: { kind: 'selectGear', gear: 6 },
+}

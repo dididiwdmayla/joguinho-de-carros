@@ -30,6 +30,17 @@ export interface TouchLayout {
   brake: Rect
   /** Handbrake, above the pedals. */
   handbrake: Rect
+  /** Clutch, above the steering bar so it falls under the left thumb. */
+  clutch: Rect
+  /** Gearbox cluster, between the steering bar and the pedals. */
+  gearUp: Rect
+  gearDown: Rect
+  reverse: Rect
+  neutral: Rect
+  /** Transmission mode selector. */
+  mode: Rect
+  /** Starter, for when the engine has been killed. */
+  ignition: Rect
   /** Top-right buttons, right to left. */
   controlsButton: Rect
   debugButton: Rect
@@ -94,6 +105,31 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     height: handbrakeHeight,
   }
 
+  // --- clutch, above the steering bar -------------------------------------
+  // Far enough above the bar that it never eats into its grab area.
+  const clutchHeight = unit * 0.95
+  const clutch: Rect = {
+    x: left,
+    y: steering.y - unit * 0.78 - clutchHeight,
+    width: Math.min(unit * 2.2, steeringWidth),
+    height: clutchHeight,
+  }
+
+  // --- gearbox cluster, left of the pedals ---------------------------------
+  // Two columns of three, bottom aligned with the pedals. Provisional: the
+  // real placement arrives with the HUD.
+  const cellWidth = unit * 0.95
+  const cellHeight = unit * 0.72
+  const cellGap = gap * 0.5
+  const columnRight = brake.x - cellWidth - gap
+  const columnLeft = columnRight - cellWidth - cellGap
+  const cell = (column: number, row: number): Rect => ({
+    x: column === 0 ? columnLeft : columnRight,
+    y: bottom - cellHeight - row * (cellHeight + cellGap),
+    width: cellWidth,
+    height: cellHeight,
+  })
+
   // --- top right buttons, laid out right to left --------------------------
   // Never below the 44 px a fingertip needs, however small the screen is.
   const buttonSize = Math.max(44, unit * 0.72)
@@ -112,6 +148,13 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     throttle,
     brake,
     handbrake,
+    clutch,
+    gearUp: cell(0, 2),
+    gearDown: cell(0, 1),
+    mode: cell(0, 0),
+    reverse: cell(1, 2),
+    neutral: cell(1, 1),
+    ignition: cell(1, 0),
     controlsButton: button(0),
     debugButton: button(1),
     fullscreenButton: button(2),

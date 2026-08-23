@@ -12,12 +12,24 @@ import {
   type CameraView,
   type FollowTarget,
 } from '../render/camera'
-import type { Scene, VehicleRenderState } from '../render/scene'
+import type { PowertrainReadout, Scene, VehicleRenderState } from '../render/scene'
 import type { Viewport } from '../render/viewport'
 import type { UiState } from '../ui/uiState'
 import type { CarParams } from '../vehicle/carParams'
 import { createTelemetry, type VehicleTelemetry } from '../vehicle/physics'
+import {
+  createPowertrainState,
+  transmissionModeLabel,
+  type PowertrainState,
+  type TransmissionMode,
+} from '../vehicle/powertrain'
 import { createVehicleState, type VehicleState } from '../vehicle/vehicleState'
+
+/**
+ * How the car is handed over on the first frame. Automatic, in drive: the game
+ * has to be drivable before anyone has read which key changes the gearbox.
+ */
+const INITIAL_TRANSMISSION_MODE: TransmissionMode = 'automatic'
 
 export interface GameState {
   readonly canvas: HTMLCanvasElement
@@ -32,6 +44,12 @@ export interface GameState {
   readonly vehicle: VehicleState
   /** State before the last physics step, used to interpolate the render. */
   readonly vehiclePrevious: VehicleState
+  /**
+   * Engine, clutch and gearbox. Kept beside the rigid-body state rather than
+   * inside it: nothing here is interpolated for the render, and the transmission
+   * mode has to stay readable from outside for the HUD that comes next.
+   */
+  readonly powertrain: PowertrainState
   readonly telemetry: VehicleTelemetry
 
   readonly camera: CameraState
@@ -41,6 +59,8 @@ export interface GameState {
 
   readonly scene: Scene
   readonly playerRender: VehicleRenderState
+  /** What the on-screen controls need from the powertrain, refreshed per frame. */
+  readonly powertrainReadout: PowertrainReadout
 
   /** Leftover simulation time, in seconds. */
   accumulator: number
@@ -66,6 +86,7 @@ export function createGameState(options: GameStateOptions): GameState {
   const vehicle = createVehicleState(0, 0, 0)
   const camera = createCameraState(vehicle.x, vehicle.y)
   const { car } = options
+  const powertrain = createPowertrainState(INITIAL_TRANSMISSION_MODE, car.powertrain.idleRpm)
 
   const playerRender: VehicleRenderState = {
     spriteKey: options.playerSpriteKey,
@@ -98,13 +119,20 @@ export function createGameState(options: GameStateOptions): GameState {
     car,
     vehicle,
     vehiclePrevious: createVehicleState(vehicle.x, vehicle.y, vehicle.yaw),
-    telemetry: createTelemetry(),
+    powertrain,
+    telemetry: createTelemetry(powertrain),
     camera,
     cameraPrevious,
     cameraView: createCameraView(),
     followTarget: { x: vehicle.x, y: vehicle.y, velocityX: 0, velocityY: 0 },
     scene,
     playerRender,
+    powertrainReadout: {
+      modeLabel: transmissionModeLabel(powertrain.mode),
+      clutch: powertrain.clutch,
+      gear: powertrain.gear,
+      stalled: powertrain.stalled,
+    },
     accumulator: 0,
     lastTimestamp: -1,
     fps: 60,

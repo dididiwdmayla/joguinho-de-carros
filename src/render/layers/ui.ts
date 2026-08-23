@@ -13,6 +13,7 @@ import {
   type Rect,
   type TouchLayout,
 } from '../../ui/touchLayout'
+import { NEUTRAL_GEAR, REVERSE_GEAR } from '../../vehicle/powertrain'
 import { inScreenSpace } from '../renderer'
 import type { RenderContext } from '../scene'
 import { roundedRectPath } from '../shapes'
@@ -33,6 +34,8 @@ export function drawUi(context: RenderContext): void {
       drawSteering(context, layout)
       drawPedals(context, layout)
       drawHandbrake(context, layout)
+      drawClutch(context, layout)
+      drawGearbox(context, layout)
     }
     if (context.ui.rotateHintVisible) drawRotateHint(context, layout)
   })
@@ -45,14 +48,14 @@ export function drawUi(context: RenderContext): void {
 
 function drawButtons(context: RenderContext, layout: TouchLayout): void {
   const { ctx, ui } = context
-  drawButtonBox(ctx, layout.controlsButton, ui.pressedButton === 'controls')
+  drawButtonBox(ctx, layout.controlsButton, ui.pressedButtons.has('controls'))
   drawControlsGlyph(ctx, layout.controlsButton, ui.controlsVisible)
 
-  drawButtonBox(ctx, layout.debugButton, ui.pressedButton === 'debug')
+  drawButtonBox(ctx, layout.debugButton, ui.pressedButtons.has('debug'))
   drawDebugGlyph(ctx, layout.debugButton)
 
   if (ui.controlsVisible) {
-    drawButtonBox(ctx, layout.fullscreenButton, ui.pressedButton === 'fullscreen')
+    drawButtonBox(ctx, layout.fullscreenButton, ui.pressedButtons.has('fullscreen'))
     drawFullscreenGlyph(ctx, layout.fullscreenButton, ui.fullscreenActive)
   }
 }
@@ -190,26 +193,103 @@ function drawPedal(
   roundedRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius)
   ctx.stroke()
 
-  const size = Math.max(10, rect.height * 0.24)
-  ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
-  ctx.fillStyle = GLYPH
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(label, rect.x + rect.width / 2, rect.y + rect.height / 2)
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'alphabetic'
+  drawLabel(ctx, rect, label, 0.24)
 }
 
 function drawHandbrake(context: RenderContext, layout: TouchLayout): void {
   const { ctx, input } = context
   const rect = layout.handbrake
   drawButtonBox(ctx, rect, input.handbrake)
-  const size = Math.max(10, rect.height * 0.3)
+  drawLabel(ctx, rect, 'MAO', 0.3)
+}
+
+// ---------------------------------------------------------------- powertrain
+
+/**
+ * The clutch fills from the left as the pedal goes down, so the friction point
+ * is something you can see as well as feel. Same travel as the key: held means
+ * going down, released means coming back up.
+ */
+function drawClutch(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, powertrain } = context
+  const rect = layout.clutch
+  const pressed = clamp(1 - powertrain.clutch, 0, 1)
+  const held = context.ui.pressedButtons.has('clutch') || context.input.clutchPress > 0
+  const radius = rect.height * 0.24
+
+  ctx.save()
+  roundedRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius)
+  ctx.fillStyle = held ? PANEL_FILL_PRESSED : PANEL_FILL
+  ctx.fill()
+  if (pressed > 0) {
+    ctx.clip()
+    ctx.fillStyle = FILL_LEVEL
+    ctx.fillRect(rect.x, rect.y, rect.width * pressed, rect.height)
+  }
+  ctx.restore()
+
+  ctx.strokeStyle = held ? PANEL_STROKE_PRESSED : PANEL_STROKE
+  ctx.lineWidth = 1.5
+  roundedRectPath(ctx, rect.x, rect.y, rect.width, rect.height, radius)
+  ctx.stroke()
+
+  drawLabel(ctx, rect, 'EMBREAGEM', 0.24)
+}
+
+function drawGearbox(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, ui, powertrain } = context
+  drawButtonBox(ctx, layout.gearUp, ui.pressedButtons.has('gearUp'))
+  drawLabel(ctx, layout.gearUp, 'MARCHA +', 0.26)
+
+  drawButtonBox(ctx, layout.gearDown, ui.pressedButtons.has('gearDown'))
+  drawLabel(ctx, layout.gearDown, 'MARCHA -', 0.26)
+
+  drawButtonBox(ctx, layout.mode, ui.pressedButtons.has('mode'))
+  drawLabel(ctx, layout.mode, powertrain.modeLabel, 0.34)
+
+  // R and N stay lit while that gear is the one selected: it is a selector,
+  // not just a button.
+  drawButtonBox(
+    ctx,
+    layout.reverse,
+    ui.pressedButtons.has('reverse') || powertrain.gear === REVERSE_GEAR,
+  )
+  drawLabel(ctx, layout.reverse, 'RE', 0.34)
+
+  drawButtonBox(
+    ctx,
+    layout.neutral,
+    ui.pressedButtons.has('neutral') || powertrain.gear === NEUTRAL_GEAR,
+  )
+  drawLabel(ctx, layout.neutral, 'N', 0.34)
+
+  drawButtonBox(
+    ctx,
+    layout.ignition,
+    ui.pressedButtons.has('ignition') || powertrain.stalled,
+  )
+  drawLabel(ctx, layout.ignition, 'PARTIDA', 0.26)
+}
+
+/** Centred caption, shrunk to fit rather than spilling out of its button. */
+function drawLabel(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  label: string,
+  scale: number,
+): void {
+  let size = Math.max(9, rect.height * scale)
   ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  const available = rect.width * 0.86
+  const natural = ctx.measureText(label).width
+  if (natural > available) {
+    size = Math.max(7, size * (available / natural))
+    ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  }
   ctx.fillStyle = GLYPH
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText('MAO', rect.x + rect.width / 2, rect.y + rect.height / 2)
+  ctx.fillText(label, rect.x + rect.width / 2, rect.y + rect.height / 2)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
 }
@@ -250,25 +330,38 @@ function drawRotateHint(context: RenderContext, layout: TouchLayout): void {
   ctx.textBaseline = 'alphabetic'
 }
 
-interface InstructionLine {
-  text: string
-  heading?: boolean
-}
-
-const INSTRUCTION_LINES: readonly InstructionLine[] = [
-  { text: 'TECLADO', heading: true },
-  { text: 'W / seta cima      acelerar' },
-  { text: 'S / seta baixo     frear' },
-  { text: 'A D / setas        estercar' },
-  { text: 'espaco             freio de mao' },
-  { text: 'F3 ou `            debug' },
-  { text: '' },
-  { text: 'TOQUE', heading: true },
-  { text: 'barra a esquerda   estercar' },
-  { text: 'pedais a direita   acelerar / frear' },
-  { text: 'MAO                freio de mao' },
-  { text: 'botoes no topo     controles, tela cheia, debug' },
+/**
+ * Two columns: the keyboard on the left, the touch layer on the right. One
+ * column of twenty-odd lines no longer fits on a phone held sideways.
+ */
+const KEYBOARD_LINES: readonly string[] = [
+  'W / seta cima      acelerar',
+  'S / seta baixo     frear',
+  'A D / setas        estercar',
+  'espaco             freio de mao',
+  'C                  embreagem (segure)',
+  'E / Q              subir / descer marcha',
+  '1 a 6              marcha (so no manual)',
+  'N ou 0             ponto morto',
+  'X                  re',
+  'R                  dar partida',
+  'T                  cambio: auto, seq, manual',
+  'F3 ou `            debug',
 ]
+
+const TOUCH_LINES: readonly string[] = [
+  'barra a esquerda   estercar',
+  'pedais a direita   acelerar / frear',
+  'EMBREAGEM          embreagem (segure)',
+  'MAO                freio de mao',
+  'MARCHA + / -       trocar marcha',
+  'RE / N             re e ponto morto',
+  'AUT SEQ MAN        modo do cambio',
+  'PARTIDA            religar o motor',
+  'botoes no topo     controles, tela cheia',
+]
+
+const INSTRUCTION_FOOTER = 'toque na tela ou pressione uma tecla'
 
 function drawInstructions(context: RenderContext): void {
   const { ctx, viewport } = context
@@ -277,23 +370,35 @@ function drawInstructions(context: RenderContext): void {
     ctx.fillStyle = 'rgba(8, 10, 14, 0.72)'
     ctx.fillRect(0, 0, viewport.cssWidth, viewport.cssHeight)
 
+    const usableWidth = viewport.cssWidth - viewport.safeArea.left - viewport.safeArea.right
     const usableHeight = viewport.cssHeight - viewport.safeArea.top - viewport.safeArea.bottom
-    const size = clamp(Math.min(viewport.cssWidth * 0.028, usableHeight * 0.042), 11, 18)
-    const lineHeight = size * 1.55
-    ctx.font = `${size.toFixed(0)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+    const rows = Math.max(KEYBOARD_LINES.length, TOUCH_LINES.length) + 1 // + heading
 
-    let textWidth = 0
-    for (const line of INSTRUCTION_LINES) {
-      textWidth = Math.max(textWidth, ctx.measureText(line.text).width)
+    // Height first, then shrink again if the two columns are too wide for the
+    // screen. Everything scales with the font, so one correction is exact.
+    let size = clamp(usableHeight * 0.05, 8, 17)
+    let columnWidth = 0
+    const measure = (): number => {
+      ctx.font = `${size.toFixed(1)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+      columnWidth = 0
+      for (const line of [...KEYBOARD_LINES, ...TOUCH_LINES]) {
+        columnWidth = Math.max(columnWidth, ctx.measureText(line).width)
+      }
+      return columnWidth * 2 + size * 2 + size * 3 // columns + gutter + padding
+    }
+    const needed = measure()
+    if (needed > usableWidth) {
+      size = Math.max(7, size * (usableWidth / needed))
+      measure()
     }
 
-    const footer = 'toque na tela ou pressione uma tecla'
-    const padding = size * 1.6
-    const panelWidth = Math.max(textWidth, ctx.measureText(footer).width) + padding * 2
-    const panelHeight = (INSTRUCTION_LINES.length + 2.6) * lineHeight + padding
+    const lineHeight = size * 1.5
+    const padding = size * 1.5
+    const gutter = size * 2
+    const panelWidth = Math.max(columnWidth * 2 + gutter, ctx.measureText(INSTRUCTION_FOOTER).width) + padding * 2
+    const panelHeight = (rows + 2) * lineHeight + padding
     const x = (viewport.cssWidth - panelWidth) / 2
-    const y =
-      viewport.safeArea.top + Math.max(0, (usableHeight - panelHeight) / 2)
+    const y = viewport.safeArea.top + Math.max(0, (usableHeight - panelHeight) / 2)
 
     ctx.fillStyle = 'rgba(14, 18, 24, 0.94)'
     ctx.strokeStyle = PANEL_STROKE
@@ -302,17 +407,25 @@ function drawInstructions(context: RenderContext): void {
     ctx.fill()
     ctx.stroke()
 
-    let cursor = y + padding * 0.7
     ctx.textBaseline = 'top'
-    for (const line of INSTRUCTION_LINES) {
-      ctx.fillStyle = line.heading === true ? '#7fb2e8' : '#d7e2ea'
-      ctx.fillText(line.text, x + padding, cursor)
-      cursor += lineHeight
+    const top = y + padding * 0.7
+    const columnX = [x + padding, x + padding + columnWidth + gutter]
+    const headings = ['TECLADO', 'TOQUE']
+    const columns = [KEYBOARD_LINES, TOUCH_LINES]
+    for (let column = 0; column < columns.length; column++) {
+      ctx.fillStyle = '#7fb2e8'
+      ctx.fillText(headings[column], columnX[column], top)
+      ctx.fillStyle = '#d7e2ea'
+      let cursor = top + lineHeight * 1.4
+      for (const line of columns[column]) {
+        ctx.fillText(line, columnX[column], cursor)
+        cursor += lineHeight
+      }
     }
 
     ctx.fillStyle = 'rgba(215, 226, 234, 0.62)'
     ctx.textAlign = 'center'
-    ctx.fillText(footer, viewport.cssWidth / 2, cursor + lineHeight * 0.4)
+    ctx.fillText(INSTRUCTION_FOOTER, viewport.cssWidth / 2, top + (rows + 0.8) * lineHeight)
     ctx.textAlign = 'left'
     ctx.textBaseline = 'alphabetic'
   })

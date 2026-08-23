@@ -33,6 +33,23 @@ export interface VehicleRenderState {
   wheelDiameter: number
 }
 
+/**
+ * What the on-screen controls need to know about the powertrain to draw
+ * themselves: the label on the mode button, how far the clutch pedal has
+ * travelled, which gear the selector is on. Not a dashboard -- that arrives
+ * with the HUD -- only the state of the buttons themselves.
+ */
+export interface PowertrainReadout {
+  /** Short mode name shown on the selector. */
+  modeLabel: string
+  /** Clutch travel, 0 pressed .. 1 released. */
+  clutch: number
+  /** -1 reverse, 0 neutral, 1..n a forward gear. */
+  gear: number
+  /** True while the engine is dead, so the starter can ask to be pressed. */
+  stalled: boolean
+}
+
 export interface Scene {
   /** Manifest key of the tile the ground layer repeats. */
   groundSpriteKey: string
@@ -50,4 +67,5 @@ export interface RenderContext {
   readonly ui: Readonly<UiState>
   /** Null while the overlay is hidden. */
   readonly debug: DebugFrame | null
+  readonly powertrain: Readonly<PowertrainReadout>
 }
