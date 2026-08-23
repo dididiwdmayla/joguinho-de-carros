@@ -3,6 +3,7 @@
  * here and is passed around by reference; no module keeps hidden globals.
  */
 import type { AssetStore } from '../assets/loader'
+import type { EngineAudio } from '../audio/engineAudio'
 import type { InputManager } from '../input/InputManager'
 import {
   copyCameraState,
@@ -38,6 +39,8 @@ export interface GameState {
   readonly assets: AssetStore
   readonly input: InputManager
   readonly ui: UiState
+  /** Silent until a gesture opens the device; the loop feeds it regardless. */
+  readonly audio: EngineAudio
 
   readonly car: CarParams
   /** Authoritative simulation state, advanced at a fixed 60 Hz. */
@@ -78,6 +81,7 @@ export interface GameStateOptions {
   input: InputManager
   ui: UiState
   car: CarParams
+  audio: EngineAudio
   playerSpriteKey: string
   groundSpriteKey: string
 }
@@ -116,6 +120,7 @@ export function createGameState(options: GameStateOptions): GameState {
     assets: options.assets,
     input: options.input,
     ui: options.ui,
+    audio: options.audio,
     car,
     vehicle,
     vehiclePrevious: createVehicleState(vehicle.x, vehicle.y, vehicle.yaw),

@@ -6,6 +6,7 @@
  * renderer uses to interpolate, so 30 fps and 144 fps produce the same physics
  * and the same motion, only sampled at different moments.
  */
+import { setEngineAudioMuted, updateEngineAudio } from '../audio/engineAudio'
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from '../core/constants'
 import { clamp, lerp, lerpAngle } from '../core/math'
 import type { DebugFrame } from '../debug/debugFrame'
@@ -93,6 +94,18 @@ function advanceFrame(state: GameState, timestamp: number): void {
     state.accumulator -= FIXED_DT
     steps++
   }
+
+  // Sound reads the same state the renderer is about to draw, and is fed in
+  // real seconds rather than simulation steps: an engine dying takes as long
+  // to be heard as it takes to happen.
+  setEngineAudioMuted(state.audio, state.ui.muted)
+  updateEngineAudio(
+    state.audio,
+    state.powertrain,
+    state.telemetry.powertrain.deltaRpm,
+    input.throttle,
+    elapsed,
+  )
 
   const alpha = clamp(state.accumulator / FIXED_DT, 0, 1)
   renderFrame(buildRenderContext(state, input, alpha))

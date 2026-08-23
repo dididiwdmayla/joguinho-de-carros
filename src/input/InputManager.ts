@@ -37,6 +37,7 @@ const MOMENTARY: ReadonlySet<ControlId> = new Set<ControlId>([
   'neutral',
   'ignition',
   'mode',
+  'mute',
 ])
 
 /** Identifier used for the mouse, which never collides with a touch id. */
@@ -55,6 +56,11 @@ export interface InputManagerOptions {
   ui: UiState
   /** Called from inside the gesture handler, where fullscreen is allowed. */
   onFullscreenRequest: () => void
+  /**
+   * Called synchronously on the first key or touch of every event, from inside
+   * the handler. Opening an audio device is only allowed there.
+   */
+  onUserGesture: () => void
 }
 
 export class InputManager {
@@ -62,6 +68,7 @@ export class InputManager {
   private readonly viewport: Viewport
   private readonly ui: UiState
   private readonly onFullscreenRequest: () => void
+  private readonly onUserGesture: () => void
   private readonly state: InputState = createInputState()
   private readonly keys = new Set<string>()
   private readonly pointers = new Map<number, ActivePointer>()
@@ -72,6 +79,7 @@ export class InputManager {
     this.viewport = options.viewport
     this.ui = options.ui
     this.onFullscreenRequest = options.onFullscreenRequest
+    this.onUserGesture = options.onUserGesture
   }
 
   attach(): void {
@@ -171,11 +179,17 @@ export class InputManager {
   // ---------------------------------------------------------------- keyboard
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (!event.repeat) this.onUserGesture()
     if (this.ui.instructionsVisible && !event.repeat) {
       this.ui.instructionsVisible = false
     }
     if (event.code === 'F3' || event.code === 'Backquote') {
       if (!event.repeat) this.ui.debugVisible = !this.ui.debugVisible
+      event.preventDefault()
+      return
+    }
+    if (event.code === 'KeyM') {
+      if (!event.repeat) this.ui.muted = !this.ui.muted
       event.preventDefault()
       return
     }
@@ -247,6 +261,7 @@ export class InputManager {
   // --------------------------------------------------------------- pointers
 
   private beginPointer(id: number, x: number, y: number): void {
+    this.onUserGesture()
     // The first press anywhere only dismisses the instructions.
     if (this.ui.instructionsVisible) {
       this.ui.instructionsVisible = false
@@ -314,6 +329,9 @@ export class InputManager {
       case 'mode':
         this.commands.push({ kind: 'cycleMode' })
         break
+      case 'mute':
+        this.ui.muted = !this.ui.muted
+        break
       default:
         break
     }
@@ -324,6 +342,7 @@ export class InputManager {
     // Buttons that stay reachable even with the control layer hidden.
     if (containsPoint(layout.controlsButton, x, y)) return 'controls'
     if (containsPoint(layout.debugButton, x, y)) return 'debug'
+    if (containsPoint(layout.muteButton, x, y)) return 'mute'
     if (!this.ui.controlsVisible) return null
 
     if (containsPoint(layout.fullscreenButton, x, y)) return 'fullscreen'

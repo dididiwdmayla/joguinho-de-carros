@@ -44,6 +44,7 @@ export interface TouchLayout {
   /** Top-right buttons, right to left. */
   controlsButton: Rect
   debugButton: Rect
+  muteButton: Rect
   fullscreenButton: Rect
 }
 
@@ -157,7 +158,8 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     ignition: cell(1, 0),
     controlsButton: button(0),
     debugButton: button(1),
-    fullscreenButton: button(2),
+    muteButton: button(2),
+    fullscreenButton: button(3),
   }
 }
 
