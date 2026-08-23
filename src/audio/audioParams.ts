@@ -29,8 +29,21 @@ export interface HarmonicParams {
 export interface EngineAudioParams {
   /** Cylinder count; sets the firing frequency together with the rpm. */
   readonly cylinders: number
-  /** Level of the whole engine bus, before the mute. */
+  /** Level of the whole engine bus, before the volume control and the mute. */
   readonly masterGain: number
+  /**
+   * Compressor on the output. Four oscillators and two noise layers add up to
+   * a signal with a far higher peak than its average, so without this the only
+   * safe master gain is one too quiet to hear on a phone. The compressor holds
+   * the peaks down and lets the whole bus come up underneath them.
+   */
+  readonly compressor: {
+    readonly thresholdDb: number
+    readonly kneeDb: number
+    readonly ratio: number
+    readonly attack: number
+    readonly release: number
+  }
   readonly harmonics: readonly HarmonicParams[]
   /** Filtered noise layer: the body that keeps it from sounding like a synth. */
   readonly noise: {
@@ -166,6 +179,13 @@ function parseEngineAudioParams(raw: unknown, where: string): EngineAudioParams 
   return {
     cylinders: readNumber(source, 'cylinders', where, 1),
     masterGain: readNumber(source, 'masterGain', where, 0),
+    // Threshold and knee are decibels, so they are allowed to be negative.
+    compressor: readBlock(
+      source['compressor'],
+      `${where}.compressor`,
+      ['thresholdDb', 'kneeDb', 'ratio', 'attack', 'release'],
+      -100,
+    ),
     harmonics: parseHarmonics(source['harmonics'], where),
     noise: readBlock(
       source['noise'],

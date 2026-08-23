@@ -5,9 +5,14 @@
  * layer asks where the controls are, the ui layer draws them in exactly the
  * same place. Everything is laid out inside the device's safe area, so the
  * notch and the gesture bar never sit on top of a control.
+ *
+ * The seat is laid out the way a car is: steering under the left thumb, the
+ * clutch on the left edge just above it so both work at once, the pedals under
+ * the right thumb, and the gearbox in the middle between them.
  */
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
+import { NEUTRAL_GEAR, REVERSE_GEAR } from '../vehicle/powertrain'
 
 export interface Rect {
   x: number
@@ -25,22 +30,26 @@ export interface TouchLayout {
   steeringGrab: Rect
   /** How far the knob travels from the centre at full lock, in CSS pixels. */
   steeringTravel: number
-  /** Stacked pedals, bottom right. */
+  /** Tall pedals: travel comes from where the finger sits inside them. */
   throttle: Rect
   brake: Rect
+  clutch: Rect
   /** Handbrake, above the pedals. */
   handbrake: Rect
-  /** Clutch, above the steering bar so it falls under the left thumb. */
-  clutch: Rect
-  /** Gearbox cluster, between the steering bar and the pedals. */
-  gearUp: Rect
-  gearDown: Rect
+  /** The H gate, used in manual. */
+  gate: Rect
+  /** Sequential selector, in the same place as the gate. */
+  sequentialUp: Rect
+  sequentialDown: Rect
+  /** Automatic selector: an indicator with reverse and neutral beside it. */
+  gearDisplay: Rect
   reverse: Rect
   neutral: Rect
-  /** Transmission mode selector. */
+  /** Transmission mode selector and starter, above the gearbox. */
   mode: Rect
-  /** Starter, for when the engine has been killed. */
   ignition: Rect
+  /** Master volume, left of the top-right buttons. */
+  volume: Rect
   /** Top-right buttons, right to left. */
   controlsButton: Rect
   debugButton: Rect
@@ -83,9 +92,22 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
   }
   const knobDiameter = steeringHeight * 0.82
 
-  // --- pedals, bottom right ----------------------------------------------
-  const pedalWidth = unit * 1.6
-  const pedalHeight = unit * 1.15
+  // --- clutch, left edge above the bar ------------------------------------
+  // Tall and narrow, because its whole point is the travel: the finger's
+  // height inside it is the pedal position. Kept off to the side of the
+  // steering bar so one thumb can steer while another feathers the clutch.
+  const clutchWidth = unit * 0.92
+  const clutchHeight = Math.min(unit * 2.5, steering.y - top - gap * 2)
+  const clutch: Rect = {
+    x: left,
+    y: steering.y - gap - clutchHeight,
+    width: clutchWidth,
+    height: clutchHeight,
+  }
+
+  // --- pedals, bottom right -----------------------------------------------
+  const pedalWidth = unit * 1.05
+  const pedalHeight = unit * 1.7
   const brake: Rect = {
     x: right - pedalWidth,
     y: bottom - pedalHeight,
@@ -106,30 +128,73 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     height: handbrakeHeight,
   }
 
-  // --- clutch, above the steering bar -------------------------------------
-  // Far enough above the bar that it never eats into its grab area.
-  const clutchHeight = unit * 0.95
-  const clutch: Rect = {
-    x: left,
-    y: steering.y - unit * 0.78 - clutchHeight,
-    width: Math.min(unit * 2.2, steeringWidth),
-    height: clutchHeight,
+  // --- gearbox, in the middle where a gear lever lives --------------------
+  // Between the wheel and the pedals when there is room for it. Held upright
+  // a phone has no such room, so the gate moves up a row instead of being
+  // squeezed into the controls on either side of it.
+  const gateHeight = unit * 2.3
+  const betweenFrom = steering.x + steering.width + gap
+  const betweenTo = throttle.x - gap
+  const aboveFrom = clutch.x + clutch.width + gap
+  const aboveTo = throttle.x - gap
+  const fitsBetween = betweenTo - betweenFrom >= unit * 2.6
+  const gateFrom = fitsBetween ? betweenFrom : aboveFrom
+  const gateSpan = Math.max(unit * 1.6, (fitsBetween ? betweenTo : aboveTo) - gateFrom)
+  const gateWidth = Math.min(unit * 4.4, gateSpan)
+  const gate: Rect = {
+    x: gateFrom + (gateSpan - gateWidth) / 2,
+    y: (fitsBetween ? bottom : steering.y - gap) - gateHeight,
+    width: gateWidth,
+    height: gateHeight,
   }
 
-  // --- gearbox cluster, left of the pedals ---------------------------------
-  // Two columns of three, bottom aligned with the pedals. Provisional: the
-  // real placement arrives with the HUD.
-  const cellWidth = unit * 0.95
-  const cellHeight = unit * 0.72
-  const cellGap = gap * 0.5
-  const columnRight = brake.x - cellWidth - gap
-  const columnLeft = columnRight - cellWidth - cellGap
-  const cell = (column: number, row: number): Rect => ({
-    x: column === 0 ? columnLeft : columnRight,
-    y: bottom - cellHeight - row * (cellHeight + cellGap),
+  // Sequential: two big paddles in the same footprint.
+  const paddleHeight = (gateHeight - gap * 0.6) / 2
+  const sequentialUp: Rect = { x: gate.x, y: gate.y, width: gate.width, height: paddleHeight }
+  const sequentialDown: Rect = {
+    x: gate.x,
+    y: gate.y + paddleHeight + gap * 0.6,
+    width: gate.width,
+    height: paddleHeight,
+  }
+
+  // Automatic: what gear it picked, with the two selectors it still answers to.
+  const cellWidth = (gate.width - gap * 0.6) / 2
+  const gearDisplay: Rect = {
+    x: gate.x,
+    y: gate.y,
     width: cellWidth,
-    height: cellHeight,
-  })
+    height: gateHeight,
+  }
+  const selectorHeight = (gateHeight - gap * 0.6) / 2
+  const reverse: Rect = {
+    x: gate.x + cellWidth + gap * 0.6,
+    y: gate.y,
+    width: cellWidth,
+    height: selectorHeight,
+  }
+  const neutral: Rect = {
+    x: reverse.x,
+    y: gate.y + selectorHeight + gap * 0.6,
+    width: cellWidth,
+    height: selectorHeight,
+  }
+
+  // Wide, but never so short that a thumb misses them.
+  const smallHeight = Math.max(40, unit * 0.72)
+  const smallWidth = (gate.width - gap * 0.6) / 2
+  const mode: Rect = {
+    x: gate.x,
+    y: gate.y - gap - smallHeight,
+    width: smallWidth,
+    height: smallHeight,
+  }
+  const ignition: Rect = {
+    x: gate.x + smallWidth + gap * 0.6,
+    y: mode.y,
+    width: smallWidth,
+    height: smallHeight,
+  }
 
   // --- top right buttons, laid out right to left --------------------------
   // Never below the 44 px a fingertip needs, however small the screen is.
@@ -140,6 +205,14 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     width: buttonSize,
     height: buttonSize,
   })
+  const buttonsLeft = button(3).x
+  const volumeWidth = clamp(unit * 2.6, 60, Math.max(60, buttonsLeft - left - gap))
+  const volume: Rect = {
+    x: buttonsLeft - gap * 0.5 - volumeWidth,
+    y: top,
+    width: volumeWidth,
+    height: buttonSize,
+  }
 
   return {
     unit,
@@ -148,14 +221,17 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     steeringTravel: (steeringWidth - knobDiameter) / 2,
     throttle,
     brake,
-    handbrake,
     clutch,
-    gearUp: cell(0, 2),
-    gearDown: cell(0, 1),
-    mode: cell(0, 0),
-    reverse: cell(1, 2),
-    neutral: cell(1, 1),
-    ignition: cell(1, 0),
+    handbrake,
+    gate,
+    sequentialUp,
+    sequentialDown,
+    gearDisplay,
+    reverse,
+    neutral,
+    mode,
+    ignition,
+    volume,
     controlsButton: button(0),
     debugButton: button(1),
     muteButton: button(2),
@@ -166,4 +242,71 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
 /** Knob diameter derived from the bar, shared by drawing and hit testing. */
 export function steeringKnobDiameter(layout: TouchLayout): number {
   return layout.steering.height * 0.82
+}
+
+// ------------------------------------------------------------------ H gate
+
+/**
+ * The gate as coordinates.
+ *
+ *     1   3   5
+ *     |   |   |
+ *     +---+---+---+     <- the corridor: neutral, all of it
+ *     |   |   |   |
+ *     2   4   6   R
+ *
+ * Columns are counted from the left; the lane is -1 up, 0 in the corridor and
+ * +1 down. Reverse is the bottom of one extra column on the right.
+ */
+export interface GateGeometry {
+  readonly columns: number
+  /** Centre of column 0. */
+  readonly firstColumnX: number
+  readonly columnSpacing: number
+  readonly corridorY: number
+  /** Distance from the corridor to a fully seated gear. */
+  readonly laneReach: number
+  readonly knobRadius: number
+}
+
+export function gateGeometry(layout: TouchLayout, forwardGears: number): GateGeometry {
+  const columns = gateColumns(forwardGears)
+  const { gate } = layout
+  const columnSpacing = gate.width / columns
+  return {
+    columns,
+    firstColumnX: gate.x + columnSpacing / 2,
+    columnSpacing,
+    corridorY: gate.y + gate.height / 2,
+    laneReach: gate.height * 0.34,
+    knobRadius: Math.min(columnSpacing, gate.height) * 0.22,
+  }
+}
+
+/** Forward gears in pairs, plus the column reverse lives at the bottom of. */
+export function gateColumns(forwardGears: number): number {
+  return Math.ceil(forwardGears / 2) + 1
+}
+
+/**
+ * Which gear sits at a gate position, or null when there is nothing there --
+ * the top of the reverse column, or an odd gear a five-speed does not have.
+ */
+export function gateGear(column: number, lane: number, forwardGears: number): number | null {
+  if (lane === 0) return NEUTRAL_GEAR
+  const reverseColumn = gateColumns(forwardGears) - 1
+  if (column === reverseColumn) return lane > 0 ? REVERSE_GEAR : null
+  const gear = column * 2 + (lane < 0 ? 1 : 2)
+  return gear >= 1 && gear <= forwardGears ? gear : null
+}
+
+/** Where a gear sits in the gate, for putting the lever back where it belongs. */
+export function gearGatePosition(
+  gear: number,
+  forwardGears: number,
+): { column: number; lane: number } {
+  if (gear === REVERSE_GEAR) return { column: gateColumns(forwardGears) - 1, lane: 1 }
+  if (gear === NEUTRAL_GEAR) return { column: 0, lane: 0 }
+  const column = Math.floor((gear - 1) / 2)
+  return { column, lane: gear % 2 === 1 ? -1 : 1 }
 }

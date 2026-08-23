@@ -30,7 +30,7 @@ import { createVehicleState, type VehicleState } from '../vehicle/vehicleState'
  * How the car is handed over on the first frame. Automatic, in drive: the game
  * has to be drivable before anyone has read which key changes the gearbox.
  */
-const INITIAL_TRANSMISSION_MODE: TransmissionMode = 'automatic'
+export const INITIAL_TRANSMISSION_MODE: TransmissionMode = 'automatic'
 
 export interface GameState {
   readonly canvas: HTMLCanvasElement
