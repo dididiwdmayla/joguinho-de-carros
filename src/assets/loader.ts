@@ -36,6 +36,9 @@ export interface AssetStore {
 /** Alpha below this counts as empty padding (kills soft halos around art). */
 const ALPHA_THRESHOLD = 8
 
+/** An image that never fires load or error would hang the boot forever. */
+const IMAGE_TIMEOUT_MS = 10_000
+
 function assetUrl(path: string): string {
   return `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`
 }
@@ -43,9 +46,33 @@ function assetUrl(path: string): string {
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
+    // Every ending is handled: loaded, failed, or simply never answered. A
+    // missing error handler is how a single broken file hangs a Promise.all
+    // for good.
+    const timer = window.setTimeout(() => {
+      settle(() => reject(new Error(`Tempo esgotado (10s) carregando ${url}`)))
+    }, IMAGE_TIMEOUT_MS)
+
+    const settle = (finish: () => void): void => {
+      window.clearTimeout(timer)
+      image.onload = null
+      image.onerror = null
+      finish()
+    }
+
     image.decoding = 'async'
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error(`Falha ao carregar imagem: ${url}`))
+    image.onload = () => {
+      settle(() => {
+        if (image.naturalWidth === 0 || image.naturalHeight === 0) {
+          reject(new Error(`Imagem vazia ou corrompida: ${url}`))
+          return
+        }
+        resolve(image)
+      })
+    }
+    image.onerror = () => {
+      settle(() => reject(new Error(`Falha ao carregar imagem: ${url}`)))
+    }
     image.src = url
   })
 }
@@ -67,7 +94,15 @@ function measureTrim(image: HTMLImageElement): SpriteTrim {
   if (ctx === null) return full
   ctx.drawImage(image, 0, 0)
 
-  const { data } = ctx.getImageData(0, 0, width, height)
+  let data: Uint8ClampedArray
+  try {
+    data = ctx.getImageData(0, 0, width, height).data
+  } catch (error: unknown) {
+    // Losing the trim only makes the sprite sit inside its padding; it must
+    // never take the whole boot down with it.
+    console.warn(`Nao foi possivel medir o recorte de ${image.src}`, error)
+    return full
+  }
   const alphaAt = (x: number, y: number): number => data[(y * width + x) * 4 + 3] ?? 0
 
   const rowHasInk = (y: number): boolean => {
@@ -106,7 +141,8 @@ export async function loadSprites(manifest: AssetManifest, keys: readonly string
     keys.map(async (key) => {
       const entry = manifest.sprites[key]
       if (entry === undefined) throw new Error(`Sprite "${key}" nao existe no manifesto`)
-      const image = await loadImage(assetUrl(entry.path))
+      const url = assetUrl(entry.path)
+      const image = await loadImage(url)
       loaded.set(key, {
         key,
         image,

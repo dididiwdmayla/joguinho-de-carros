@@ -1,49 +1,61 @@
 /**
- * Keyboard + touch front-end for InputState.
+ * Keyboard, touch and mouse front-end for InputState.
  *
  * Everything DOM-flavoured about controls lives here. The simulation only ever
  * sees the normalised InputState returned by `sample()`.
+ *
+ * Touches are tracked one by one, keyed by their identifier, so steering with
+ * one thumb while the other holds the throttle is just two independent
+ * pointers -- there is never an assumption that only one finger is down.
  */
 import { clamp } from '../core/math'
+import type { Viewport } from '../render/viewport'
+import {
+  computeTouchLayout,
+  containsPoint,
+  type Rect,
+  type TouchLayout,
+} from '../ui/touchLayout'
+import type { UiButton, UiState } from '../ui/uiState'
 import { createInputState, type InputState } from './input'
 
-/** Fraction of a touch zone's half-width that maps to full deflection. */
-const TOUCH_FULL_DEFLECTION = 0.85
+/** Pedal reading at the shallow edge, so a light press still does something. */
+const PEDAL_FLOOR = 0.25
 
-/** Side of the (top-right) square that toggles the debug overlay, in CSS px. */
-const DEBUG_CORNER_MAX = 96
-const DEBUG_CORNER_FRACTION = 0.18
+type ControlId = 'steering' | 'throttle' | 'brake' | 'handbrake' | UiButton
 
-type TouchZone = 'steer' | 'pedals'
+/** Identifier used for the mouse, which never collides with a touch id. */
+const MOUSE_POINTER_ID = -1
 
-interface TrackedTouch {
-  zone: TouchZone
+interface ActivePointer {
+  control: ControlId
   steer: number
   throttle: number
   brake: number
 }
 
-export interface DebugCornerRect {
-  x: number
-  y: number
-  size: number
-}
-
-/** Top-right square that toggles the overlay on devices with no keyboard. */
-export function debugCornerRect(cssWidth: number, cssHeight: number): DebugCornerRect {
-  const size = Math.min(DEBUG_CORNER_MAX, Math.min(cssWidth, cssHeight) * DEBUG_CORNER_FRACTION)
-  return { x: cssWidth - size, y: 0, size }
+export interface InputManagerOptions {
+  canvas: HTMLCanvasElement
+  viewport: Viewport
+  ui: UiState
+  /** Called from inside the gesture handler, where fullscreen is allowed. */
+  onFullscreenRequest: () => void
 }
 
 export class InputManager {
   private readonly canvas: HTMLCanvasElement
+  private readonly viewport: Viewport
+  private readonly ui: UiState
+  private readonly onFullscreenRequest: () => void
   private readonly state: InputState = createInputState()
   private readonly keys = new Set<string>()
-  private readonly touches = new Map<number, TrackedTouch>()
-  private debugTogglePending = false
+  private readonly pointers = new Map<number, ActivePointer>()
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.canvas = canvas
+  constructor(options: InputManagerOptions) {
+    this.canvas = options.canvas
+    this.viewport = options.viewport
+    this.ui = options.ui
+    this.onFullscreenRequest = options.onFullscreenRequest
   }
 
   attach(): void {
@@ -54,6 +66,9 @@ export class InputManager {
     this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: false })
     this.canvas.addEventListener('touchend', this.onTouchEnd, { passive: false })
     this.canvas.addEventListener('touchcancel', this.onTouchEnd, { passive: false })
+    this.canvas.addEventListener('mousedown', this.onMouseDown)
+    window.addEventListener('mousemove', this.onMouseMove)
+    window.addEventListener('mouseup', this.onMouseUp)
   }
 
   detach(): void {
@@ -64,6 +79,9 @@ export class InputManager {
     this.canvas.removeEventListener('touchmove', this.onTouchMove)
     this.canvas.removeEventListener('touchend', this.onTouchEnd)
     this.canvas.removeEventListener('touchcancel', this.onTouchEnd)
+    this.canvas.removeEventListener('mousedown', this.onMouseDown)
+    window.removeEventListener('mousemove', this.onMouseMove)
+    window.removeEventListener('mouseup', this.onMouseUp)
   }
 
   /** Merges every source into the current control state. */
@@ -73,32 +91,37 @@ export class InputManager {
     const keySteer =
       (this.anyKey('KeyD', 'ArrowRight') ? 1 : 0) - (this.anyKey('KeyA', 'ArrowLeft') ? 1 : 0)
 
-    let touchThrottle = 0
-    let touchBrake = 0
-    let touchSteer = 0
+    let pointerThrottle = 0
+    let pointerBrake = 0
+    let pointerSteer = 0
     let steering = false
-    for (const touch of this.touches.values()) {
-      if (touch.zone === 'steer') {
-        touchSteer = touch.steer
-        steering = true
-      } else {
-        touchThrottle = Math.max(touchThrottle, touch.throttle)
-        touchBrake = Math.max(touchBrake, touch.brake)
+    let pointerHandbrake = false
+    for (const pointer of this.pointers.values()) {
+      switch (pointer.control) {
+        case 'steering':
+          pointerSteer = pointer.steer
+          steering = true
+          break
+        case 'throttle':
+          pointerThrottle = Math.max(pointerThrottle, pointer.throttle)
+          break
+        case 'brake':
+          pointerBrake = Math.max(pointerBrake, pointer.brake)
+          break
+        case 'handbrake':
+          pointerHandbrake = true
+          break
+        default:
+          break
       }
     }
 
-    this.state.throttle = Math.max(keyThrottle, touchThrottle)
-    this.state.brake = Math.max(keyBrake, touchBrake)
-    this.state.steer = steering ? touchSteer : keySteer
-    this.state.handbrake = this.keys.has('Space')
+    this.ui.steeringActive = steering
+    this.state.throttle = Math.max(keyThrottle, pointerThrottle)
+    this.state.brake = Math.max(keyBrake, pointerBrake)
+    this.state.steer = steering ? pointerSteer : keySteer
+    this.state.handbrake = this.keys.has('Space') || pointerHandbrake
     return this.state
-  }
-
-  /** True once per debug-toggle request (F3, backquote or a corner tap). */
-  consumeDebugToggle(): boolean {
-    const pending = this.debugTogglePending
-    this.debugTogglePending = false
-    return pending
   }
 
   private anyKey(...codes: readonly string[]): boolean {
@@ -106,9 +129,18 @@ export class InputManager {
     return false
   }
 
+  private layout(): TouchLayout {
+    return computeTouchLayout(this.viewport)
+  }
+
+  // ---------------------------------------------------------------- keyboard
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (this.ui.instructionsVisible && !event.repeat) {
+      this.ui.instructionsVisible = false
+    }
     if (event.code === 'F3' || event.code === 'Backquote') {
-      if (!event.repeat) this.debugTogglePending = true
+      if (!event.repeat) this.ui.debugVisible = !this.ui.debugVisible
       event.preventDefault()
       return
     }
@@ -122,32 +154,20 @@ export class InputManager {
     if (this.keys.delete(event.code)) event.preventDefault()
   }
 
-  /** Losing focus must not leave a key stuck down. */
+  /** Losing focus must not leave a key or a finger stuck down. */
   private readonly onBlur = (): void => {
     this.keys.clear()
-    this.touches.clear()
+    this.pointers.clear()
+    this.ui.pressedButton = null
   }
+
+  // ------------------------------------------------------------------- touch
 
   private readonly onTouchStart = (event: TouchEvent): void => {
     event.preventDefault()
     const rect = this.canvas.getBoundingClientRect()
     for (const touch of Array.from(event.changedTouches)) {
-      const x = touch.clientX - rect.left
-      const y = touch.clientY - rect.top
-
-      const corner = debugCornerRect(rect.width, rect.height)
-      if (x >= corner.x && x <= corner.x + corner.size && y >= corner.y && y <= corner.y + corner.size) {
-        this.debugTogglePending = true
-        continue
-      }
-
-      // Placeholder scheme: bottom-left steers, bottom-right is the pedals.
-      // The real touch controls land in a later stage.
-      if (y < rect.height / 2) continue
-      const zone: TouchZone = x < rect.width / 2 ? 'steer' : 'pedals'
-      const tracked: TrackedTouch = { zone, steer: 0, throttle: 0, brake: 0 }
-      this.updateTouch(tracked, x, y, rect.width, rect.height)
-      this.touches.set(touch.identifier, tracked)
+      this.beginPointer(touch.identifier, touch.clientX - rect.left, touch.clientY - rect.top)
     }
   }
 
@@ -155,39 +175,131 @@ export class InputManager {
     event.preventDefault()
     const rect = this.canvas.getBoundingClientRect()
     for (const touch of Array.from(event.changedTouches)) {
-      const tracked = this.touches.get(touch.identifier)
-      if (tracked === undefined) continue
-      this.updateTouch(tracked, touch.clientX - rect.left, touch.clientY - rect.top, rect.width, rect.height)
+      this.movePointer(touch.identifier, touch.clientX - rect.left, touch.clientY - rect.top)
     }
   }
 
   private readonly onTouchEnd = (event: TouchEvent): void => {
     event.preventDefault()
-    for (const touch of Array.from(event.changedTouches)) this.touches.delete(touch.identifier)
+    for (const touch of Array.from(event.changedTouches)) this.endPointer(touch.identifier)
   }
 
-  private updateTouch(
-    tracked: TrackedTouch,
-    x: number,
-    y: number,
-    cssWidth: number,
-    cssHeight: number,
-  ): void {
-    if (tracked.zone === 'steer') {
-      // Horizontal finger position across the bottom-left quadrant.
-      const center = cssWidth / 4
-      const span = (cssWidth / 4) * TOUCH_FULL_DEFLECTION
-      tracked.steer = clamp((x - center) / span, -1, 1)
+  // ------------------------------------------------------------------- mouse
+  // The same controls, so the on-screen buttons are usable with a cursor.
+
+  private readonly onMouseDown = (event: MouseEvent): void => {
+    const rect = this.canvas.getBoundingClientRect()
+    this.beginPointer(MOUSE_POINTER_ID, event.clientX - rect.left, event.clientY - rect.top)
+  }
+
+  private readonly onMouseMove = (event: MouseEvent): void => {
+    if (!this.pointers.has(MOUSE_POINTER_ID)) return
+    const rect = this.canvas.getBoundingClientRect()
+    this.movePointer(MOUSE_POINTER_ID, event.clientX - rect.left, event.clientY - rect.top)
+  }
+
+  private readonly onMouseUp = (): void => {
+    this.endPointer(MOUSE_POINTER_ID)
+  }
+
+  // --------------------------------------------------------------- pointers
+
+  private beginPointer(id: number, x: number, y: number): void {
+    // The first press anywhere only dismisses the instructions.
+    if (this.ui.instructionsVisible) {
+      this.ui.instructionsVisible = false
       return
     }
-    // Vertical finger position across the bottom-right quadrant:
-    // above its middle accelerates, below it brakes.
-    const center = cssHeight * 0.75
-    const span = (cssHeight / 4) * TOUCH_FULL_DEFLECTION
-    const axis = clamp((center - y) / span, -1, 1)
-    tracked.throttle = Math.max(0, axis)
-    tracked.brake = Math.max(0, -axis)
+
+    const control = this.hitTest(x, y)
+    if (control === null) return
+
+    if (control === 'controls' || control === 'fullscreen' || control === 'debug') {
+      this.ui.pressedButton = control
+      this.pointers.set(id, { control, steer: 0, throttle: 0, brake: 0 })
+      this.activateButton(control)
+      return
+    }
+
+    const pointer: ActivePointer = { control, steer: 0, throttle: 0, brake: 0 }
+    this.updatePointer(pointer, x, y)
+    this.pointers.set(id, pointer)
   }
+
+  private movePointer(id: number, x: number, y: number): void {
+    const pointer = this.pointers.get(id)
+    if (pointer === undefined) return
+    this.updatePointer(pointer, x, y)
+  }
+
+  private endPointer(id: number): void {
+    const pointer = this.pointers.get(id)
+    if (pointer === undefined) return
+    if (this.ui.pressedButton === pointer.control) this.ui.pressedButton = null
+    this.pointers.delete(id)
+  }
+
+  private activateButton(button: UiButton): void {
+    switch (button) {
+      case 'controls':
+        this.ui.controlsVisible = !this.ui.controlsVisible
+        // Releasing the layer must not leave a pedal held down.
+        this.pointers.clear()
+        this.ui.pressedButton = null
+        break
+      case 'debug':
+        this.ui.debugVisible = !this.ui.debugVisible
+        break
+      case 'fullscreen':
+        this.onFullscreenRequest()
+        break
+    }
+  }
+
+  private hitTest(x: number, y: number): ControlId | null {
+    const layout = this.layout()
+    // Buttons that stay reachable even with the control layer hidden.
+    if (containsPoint(layout.controlsButton, x, y)) return 'controls'
+    if (containsPoint(layout.debugButton, x, y)) return 'debug'
+    if (!this.ui.controlsVisible) return null
+
+    if (containsPoint(layout.fullscreenButton, x, y)) return 'fullscreen'
+    if (containsPoint(layout.handbrake, x, y)) return 'handbrake'
+    if (containsPoint(layout.throttle, x, y)) return 'throttle'
+    if (containsPoint(layout.brake, x, y)) return 'brake'
+    if (containsPoint(layout.steeringGrab, x, y)) return 'steering'
+    return null
+  }
+
+  private updatePointer(pointer: ActivePointer, x: number, y: number): void {
+    const layout = this.layout()
+    switch (pointer.control) {
+      case 'steering': {
+        // Proportional to how far the finger sits from the bar's centre.
+        const centre = layout.steering.x + layout.steering.width / 2
+        pointer.steer = clamp((x - centre) / layout.steeringTravel, -1, 1)
+        break
+      }
+      case 'throttle':
+        pointer.throttle = pedalAmount(layout.throttle, y, 'up')
+        break
+      case 'brake':
+        pointer.brake = pedalAmount(layout.brake, y, 'down')
+        break
+      default:
+        break
+    }
+  }
+}
+
+/**
+ * How hard a pedal is being pressed: shallow at the edge nearest the palm,
+ * full at the far edge, and held for as long as the finger stays down.
+ */
+function pedalAmount(rect: Rect, y: number, direction: 'up' | 'down'): number {
+  const travel = direction === 'up' ? rect.y + rect.height - y : y - rect.y
+  const ratio = clamp(travel / rect.height, 0, 1)
+  return PEDAL_FLOOR + (1 - PEDAL_FLOOR) * ratio
 }
 
 const CONTROL_KEYS: ReadonlySet<string> = new Set<string>([

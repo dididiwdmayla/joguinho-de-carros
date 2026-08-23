@@ -3,7 +3,7 @@
  * here and is passed around by reference; no module keeps hidden globals.
  */
 import type { AssetStore } from '../assets/loader'
-import { InputManager } from '../input/InputManager'
+import type { InputManager } from '../input/InputManager'
 import {
   copyCameraState,
   createCameraState,
@@ -13,7 +13,8 @@ import {
   type FollowTarget,
 } from '../render/camera'
 import type { Scene, VehicleRenderState } from '../render/scene'
-import { createViewport, type Viewport } from '../render/viewport'
+import type { Viewport } from '../render/viewport'
+import type { UiState } from '../ui/uiState'
 import type { CarParams } from '../vehicle/carParams'
 import { createTelemetry, type VehicleTelemetry } from '../vehicle/physics'
 import { createVehicleState, type VehicleState } from '../vehicle/vehicleState'
@@ -24,6 +25,7 @@ export interface GameState {
   readonly viewport: Viewport
   readonly assets: AssetStore
   readonly input: InputManager
+  readonly ui: UiState
 
   readonly car: CarParams
   /** Authoritative simulation state, advanced at a fixed 60 Hz. */
@@ -40,7 +42,6 @@ export interface GameState {
   readonly scene: Scene
   readonly playerRender: VehicleRenderState
 
-  debugVisible: boolean
   /** Leftover simulation time, in seconds. */
   accumulator: number
   /** Timestamp of the previous frame in milliseconds, -1 before the first. */
@@ -52,8 +53,10 @@ export interface GameState {
 export interface GameStateOptions {
   canvas: HTMLCanvasElement
   ctx: CanvasRenderingContext2D
+  viewport: Viewport
   assets: AssetStore
   input: InputManager
+  ui: UiState
   car: CarParams
   playerSpriteKey: string
   groundSpriteKey: string
@@ -62,6 +65,7 @@ export interface GameStateOptions {
 export function createGameState(options: GameStateOptions): GameState {
   const vehicle = createVehicleState(0, 0, 0)
   const camera = createCameraState(vehicle.x, vehicle.y)
+  const { car } = options
 
   const playerRender: VehicleRenderState = {
     spriteKey: options.playerSpriteKey,
@@ -69,8 +73,11 @@ export function createGameState(options: GameStateOptions): GameState {
     y: vehicle.y,
     yaw: vehicle.yaw,
     steer: vehicle.steer,
-    frontAxleOffset: options.car.cgToFront,
-    bodyWidth: options.car.width,
+    frontAxleOffset: car.cgToFront,
+    rearAxleOffset: car.cgToRear,
+    trackWidth: car.trackWidth,
+    wheelWidth: car.wheelWidth,
+    wheelDiameter: car.wheelDiameter,
   }
 
   const scene: Scene = {
@@ -84,10 +91,11 @@ export function createGameState(options: GameStateOptions): GameState {
   return {
     canvas: options.canvas,
     ctx: options.ctx,
-    viewport: createViewport(),
+    viewport: options.viewport,
     assets: options.assets,
     input: options.input,
-    car: options.car,
+    ui: options.ui,
+    car,
     vehicle,
     vehiclePrevious: createVehicleState(vehicle.x, vehicle.y, vehicle.yaw),
     telemetry: createTelemetry(),
@@ -97,7 +105,6 @@ export function createGameState(options: GameStateOptions): GameState {
     followTarget: { x: vehicle.x, y: vehicle.y, velocityX: 0, velocityY: 0 },
     scene,
     playerRender,
-    debugVisible: false,
     accumulator: 0,
     lastTimestamp: -1,
     fps: 60,

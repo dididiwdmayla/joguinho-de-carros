@@ -1,19 +1,18 @@
 /**
  * Vehicles layer.
  *
- * Bodies come from sprites, front wheels are drawn in code so the steering
- * angle is visible. Nothing outside this file depends on how any of it is
- * drawn: the layer only reads the pose and the sizes it is handed.
+ * Bodies come from sprites, wheels are drawn in code underneath them: the
+ * bodywork covers most of each tyre and only the sliver that clears the
+ * silhouette shows, which is what a real car looks like from directly above
+ * and is what makes the steering angle readable without shouting.
+ *
+ * Nothing outside this file depends on how any of it is drawn: the layer only
+ * reads the pose and the sizes it is handed.
  */
 import { inWorldSpace } from '../renderer'
-import {
-  WHEEL_COLOR,
-  WHEEL_CORNER_RADIUS,
-  WHEEL_LENGTH,
-  WHEEL_TRACK_FRACTION,
-  WHEEL_WIDTH,
-} from '../renderConfig'
+import { WHEEL_COLOR, WHEEL_CORNER_FRACTION } from '../renderConfig'
 import type { RenderContext, VehicleRenderState } from '../scene'
+import { roundedRectPath } from '../shapes'
 import { drawSpriteMeters } from '../sprite'
 
 export function drawVehicles(context: RenderContext): void {
@@ -28,30 +27,41 @@ export function drawVehicles(context: RenderContext): void {
       // the body's origin.
       ctx.translate(vehicle.x, vehicle.y)
       ctx.rotate(vehicle.yaw)
+      drawWheels(ctx, vehicle)
       drawSpriteMeters(ctx, sprite)
-      drawFrontWheels(ctx, vehicle)
       ctx.restore()
     }
   })
 }
 
-/** Two steered rectangles on the front axle. Rear wheels stay hidden. */
-function drawFrontWheels(ctx: CanvasRenderingContext2D, vehicle: VehicleRenderState): void {
-  const halfTrack = (vehicle.bodyWidth * WHEEL_TRACK_FRACTION) / 2
+/** All four tyres: the front pair steered, the rear pair square to the body. */
+function drawWheels(ctx: CanvasRenderingContext2D, vehicle: VehicleRenderState): void {
+  const halfTrack = vehicle.trackWidth / 2
   ctx.fillStyle = WHEEL_COLOR
   for (const side of [-1, 1]) {
-    ctx.save()
-    ctx.translate(vehicle.frontAxleOffset, side * halfTrack)
-    ctx.rotate(vehicle.steer)
-    ctx.beginPath()
-    ctx.roundRect(
-      -WHEEL_LENGTH / 2,
-      -WHEEL_WIDTH / 2,
-      WHEEL_LENGTH,
-      WHEEL_WIDTH,
-      WHEEL_CORNER_RADIUS,
-    )
-    ctx.fill()
-    ctx.restore()
+    drawWheel(ctx, vehicle, vehicle.frontAxleOffset, side * halfTrack, vehicle.steer)
+    drawWheel(ctx, vehicle, -vehicle.rearAxleOffset, side * halfTrack, 0)
   }
+}
+
+function drawWheel(
+  ctx: CanvasRenderingContext2D,
+  vehicle: VehicleRenderState,
+  offsetX: number,
+  offsetY: number,
+  angle: number,
+): void {
+  ctx.save()
+  ctx.translate(offsetX, offsetY)
+  ctx.rotate(angle)
+  roundedRectPath(
+    ctx,
+    -vehicle.wheelDiameter / 2,
+    -vehicle.wheelWidth / 2,
+    vehicle.wheelDiameter,
+    vehicle.wheelWidth,
+    vehicle.wheelWidth * WHEEL_CORNER_FRACTION,
+  )
+  ctx.fill()
+  ctx.restore()
 }

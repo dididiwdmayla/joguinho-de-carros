@@ -6,6 +6,8 @@
  */
 import type { AssetStore } from '../assets/loader'
 import type { DebugFrame } from '../debug/debugFrame'
+import type { InputState } from '../input/input'
+import type { UiState } from '../ui/uiState'
 import type { CameraView } from './camera'
 import type { Viewport } from './viewport'
 
@@ -19,10 +21,16 @@ export interface VehicleRenderState {
   yaw: number
   /** Front wheel angle [rad], drawn on the front axle. */
   steer: number
-  /** Front axle position ahead of the centre of gravity [m]. */
+  /** Front axle distance ahead of the centre of gravity [m]. */
   frontAxleOffset: number
-  /** Body width [m], sets the wheel track. */
-  bodyWidth: number
+  /** Rear axle distance behind the centre of gravity [m]. */
+  rearAxleOffset: number
+  /** Distance between the left and right tyre centres [m]. */
+  trackWidth: number
+  /** Tyre width [m]. */
+  wheelWidth: number
+  /** Tyre diameter [m]. */
+  wheelDiameter: number
 }
 
 export interface Scene {
@@ -37,8 +45,9 @@ export interface RenderContext {
   readonly camera: CameraView
   readonly assets: AssetStore
   readonly scene: Scene
+  /** Current controls, so the on-screen pedals can show what is pressed. */
+  readonly input: Readonly<InputState>
+  readonly ui: Readonly<UiState>
   /** Null while the overlay is hidden. */
   readonly debug: DebugFrame | null
-  /** Top-right square that toggles the overlay by touch. */
-  readonly debugCornerVisible: boolean
 }
