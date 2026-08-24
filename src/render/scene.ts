@@ -2,7 +2,14 @@
  * What the renderer is allowed to know.
  *
  * The scene is a plain description of the frame: no simulation types leak in,
- * so a layer can be rewritten without touching anything upstream of it.
+ * so a layer can be rewritten without touching anything upstream of it. It is
+ * built once when a level loads and only the handful of fields that actually
+ * move -- the player's pose, the target bay's glow -- are written per frame.
+ *
+ * Sprites arrive here already resolved, as images with their size in metres
+ * attached, rather than as manifest keys. That is what lets a parked car be a
+ * repainted copy of the sedan and still be drawn by the same three lines as
+ * everything else.
  */
 import type { AssetStore } from '../assets/loader'
 import type { DebugFrame } from '../debug/debugFrame'
@@ -10,28 +17,113 @@ import type { InputState } from '../input/input'
 import type { GateOverlay } from '../ui/gateOverlay'
 import type { UiState } from '../ui/uiState'
 import type { CameraView } from './camera'
+import type { DrawableSprite } from './tint'
 import type { Viewport } from './viewport'
 
+/** Wheels drawn in code under a body. Null on a car that is only scenery. */
+export interface WheelRender {
+  /** Front wheel angle [rad]. */
+  steer: number
+  /** Front axle distance ahead of the centre of gravity [m]. */
+  readonly frontAxleOffset: number
+  /** Rear axle distance behind the centre of gravity [m]. */
+  readonly rearAxleOffset: number
+  /** Distance between the left and right tyre centres [m]. */
+  readonly trackWidth: number
+  /** Tyre width [m]. */
+  readonly wheelWidth: number
+  /** Tyre diameter [m]. */
+  readonly wheelDiameter: number
+}
+
 export interface VehicleRenderState {
-  /** Manifest key of the body art. */
-  spriteKey: string
-  /** Centre of gravity in world metres; the sprite is centred and rotated here. */
+  sprite: DrawableSprite
+  /** Centre of the body in world metres; the sprite is centred and rotated here. */
   x: number
   y: number
   /** Heading [rad]. */
   yaw: number
-  /** Front wheel angle [rad], drawn on the front axle. */
-  steer: number
-  /** Front axle distance ahead of the centre of gravity [m]. */
-  frontAxleOffset: number
-  /** Rear axle distance behind the centre of gravity [m]. */
-  rearAxleOffset: number
-  /** Distance between the left and right tyre centres [m]. */
-  trackWidth: number
-  /** Tyre width [m]. */
-  wheelWidth: number
-  /** Tyre diameter [m]. */
-  wheelDiameter: number
+  wheels: WheelRender | null
+}
+
+/** A cone, a planter, a parked car: art at a pose, and whether it casts. */
+export interface PropRenderState {
+  readonly sprite: DrawableSprite
+  readonly x: number
+  readonly y: number
+  readonly yaw: number
+  /** Tall enough to throw a shadow. A painted line is not. */
+  readonly shadow: boolean
+}
+
+/** Something painted on the asphalt: a stain, a crack, a manhole. */
+export interface DecalRenderState {
+  readonly sprite: DrawableSprite
+  readonly x: number
+  readonly y: number
+  readonly yaw: number
+  /** Multiplies the sprite's declared metres. */
+  readonly scale: number
+  readonly alpha: number
+}
+
+/** One worn segment of painted line, in world metres. */
+export interface PaintSegment {
+  readonly x1: number
+  readonly y1: number
+  readonly x2: number
+  readonly y2: number
+  readonly alpha: number
+}
+
+/** A bay, as the decal layer paints it: nothing here is a PNG. */
+export interface SlotRender {
+  readonly x: number
+  readonly y: number
+  readonly angle: number
+  readonly length: number
+  readonly width: number
+  /** True for the bay the player is being sent to. */
+  readonly target: boolean
+  readonly paint: readonly PaintSegment[]
+}
+
+export interface GroundRender {
+  /** The tile the lot is paved with. */
+  readonly sprite: DrawableSprite
+  /** Paved rectangle in world metres; outside it there is no lot. */
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
+export interface Scene {
+  ground: GroundRender | null
+  /** Outline of the playable area, drawn as a kerb. Closed polygon. */
+  boundary: readonly (readonly [number, number])[]
+  decals: readonly DecalRenderState[]
+  slots: readonly SlotRender[]
+  props: readonly PropRenderState[]
+  vehicles: VehicleRenderState[]
+  /**
+   * How far through its hold the target bay is, 0..1. The bay brightens with
+   * it, which is the only thing on screen that says the car is being counted
+   * as parked -- and it is scenery, not a readout.
+   */
+  targetProgress: number
+}
+
+export function createScene(): Scene {
+  return {
+    ground: null,
+    boundary: [],
+    decals: [],
+    slots: [],
+    props: [],
+    vehicles: [],
+    targetProgress: 0,
+  }
 }
 
 /**
@@ -53,12 +145,6 @@ export interface PowertrainReadout {
   parkReady: boolean
   /** True while the engine is dead, so the starter can ask to be pressed. */
   stalled: boolean
-}
-
-export interface Scene {
-  /** Manifest key of the tile the ground layer repeats. */
-  groundSpriteKey: string
-  vehicles: VehicleRenderState[]
 }
 
 export interface RenderContext {

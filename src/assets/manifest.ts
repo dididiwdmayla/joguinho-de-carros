@@ -5,6 +5,16 @@
  * always drawn from the metres declared here.
  */
 
+/**
+ * How a sprite is laid onto what is already on the canvas.
+ *
+ * "normal" is a plain blit and is what almost everything wants. "multiply" is
+ * for art that was drawn on white paper instead of on transparency: multiplied
+ * against the asphalt, white leaves it exactly as it was and only the dark
+ * parts land, which is precisely what a stain or a crack does to a road.
+ */
+export type SpriteBlend = 'normal' | 'multiply'
+
 /** A world sprite: drawn with its +X axis along `lengthMeters`. */
 export interface SpriteManifestEntry {
   readonly path: string
@@ -12,6 +22,7 @@ export interface SpriteManifestEntry {
   readonly lengthMeters: number
   /** Extent along the sprite's own +Y axis [m]. */
   readonly widthMeters: number
+  readonly blend: SpriteBlend
 }
 
 /** A screen-space image (no physical size). */
@@ -44,6 +55,15 @@ function readNumber(source: Record<string, unknown>, field: string, where: strin
   return value
 }
 
+function readBlend(source: Record<string, unknown>, where: string): SpriteBlend {
+  const value = source['blend']
+  if (value === undefined) return 'normal'
+  if (value !== 'normal' && value !== 'multiply') {
+    throw new Error(`${where}: campo "blend" deve ser "normal" ou "multiply"`)
+  }
+  return value
+}
+
 function parseManifest(raw: unknown): AssetManifest {
   if (!isRecord(raw)) throw new Error('assets.json: raiz deve ser um objeto')
   const rawSprites = raw['sprites']
@@ -59,6 +79,7 @@ function parseManifest(raw: unknown): AssetManifest {
       path: readString(value, 'path', where),
       lengthMeters: readNumber(value, 'lengthMeters', where),
       widthMeters: readNumber(value, 'widthMeters', where),
+      blend: readBlend(value, where),
     }
   }
 

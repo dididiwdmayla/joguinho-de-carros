@@ -39,6 +39,7 @@ import { inScreenSpace } from '../renderer'
 import type { RenderContext } from '../scene'
 import { roundedRectPath } from '../shapes'
 import { drawEditorChrome, drawEditorScrim, drawMenu } from './menu'
+import { drawScreen } from './screens'
 import {
   drawButtonBox,
   drawLabel,
@@ -67,6 +68,10 @@ export function drawUi(context: RenderContext): void {
   const { ui } = context
   const layout = computeTouchLayout(context.viewport, ui.controls, ui.gatePattern, ui.mode)
   const editing = ui.menu === 'edit'
+  // A panel in front of the game -- the level list, pause, the result of a run
+  // -- stands in for every driving control at once: none of them is driving
+  // anything while it is up, so none of them is drawn.
+  const screen = ui.screen
 
   // The gate is an element over the canvas, not paint on it, so it is placed
   // before the frame is drawn rather than inside it.
@@ -78,15 +83,18 @@ export function drawUi(context: RenderContext): void {
     if (editing) drawEditorScrim(context)
     // The top-right row is the way into the menu; inside the editor the bar
     // takes that corner over, so the row stands down.
-    if (!editing) drawButtons(context, layout)
-    if (ui.controlsVisible) drawControls(context, layout, editing)
-    if (ui.rotateHintVisible && !editing) drawRotateHint(context, layout)
+    if (!editing && screen === null) drawButtons(context, layout)
+    if (ui.controlsVisible && screen === null) drawControls(context, layout, editing)
+    if (ui.rotateHintVisible && !editing && screen === null) drawRotateHint(context, layout)
   })
 
   if (context.debug !== null) drawDebugOverlay(context, context.debug)
   if (editing) drawEditorChrome(context, layout)
+  if (screen !== null) drawScreen(context, screen)
+  // The settings menu opens over the panels as much as over the game, so it is
+  // painted last of the three.
   if (ui.menu === 'main') drawMenu(context)
-  if (ui.instructionsVisible) drawInstructions(context)
+  if (ui.instructionsVisible && screen === null) drawInstructions(context)
 }
 
 /**
@@ -126,6 +134,9 @@ function drawControls(context: RenderContext, layout: TouchLayout, editing: bool
 
 function drawButtons(context: RenderContext, layout: TouchLayout): void {
   const { ctx, ui } = context
+  drawButtonBox(ctx, layout.pauseButton, ui.pressedButtons.has('pause'))
+  drawPauseGlyph(ctx, layout.pauseButton)
+
   drawButtonBox(ctx, layout.menuButton, ui.pressedButtons.has('menu'))
   drawMenuGlyph(ctx, layout.menuButton)
 
@@ -142,6 +153,18 @@ function drawButtons(context: RenderContext, layout: TouchLayout): void {
     drawButtonBox(ctx, layout.fullscreenButton, ui.pressedButtons.has('fullscreen'))
     drawFullscreenGlyph(ctx, layout.fullscreenButton, ui.fullscreenActive)
   }
+}
+
+/** Two bars: pause. The one glyph nobody has to be taught. */
+function drawPauseGlyph(ctx: CanvasRenderingContext2D, rect: Rect): void {
+  const barWidth = rect.width * 0.13
+  const barHeight = rect.height * 0.4
+  const gap = barWidth * 1.1
+  const top = rect.y + (rect.height - barHeight) / 2
+  const centerX = rect.x + rect.width / 2
+  ctx.fillStyle = GLYPH
+  ctx.fillRect(centerX - gap / 2 - barWidth, top, barWidth, barHeight)
+  ctx.fillRect(centerX + gap / 2, top, barWidth, barHeight)
 }
 
 /** Three sliders: settings. Deliberately unlike the control layer's three bars. */
@@ -524,6 +547,7 @@ function syncGate(context: RenderContext, layout: TouchLayout, editing: boolean)
     ui.mode !== 'manual' ||
     ui.instructionsVisible ||
     ui.menu === 'main' ||
+    ui.screen !== null ||
     (hidden.gearbox && !editing)
   ) {
     context.gate.hide()
@@ -639,7 +663,7 @@ const KEYBOARD_LINES: readonly string[] = [
   'T                  cambio: auto, seq, manual',
   'M                  mudo',
   'F3 ou `            debug',
-  'Esc                fechar o menu',
+  'Esc                pausar / fechar o menu',
 ]
 
 const TOUCH_LINES: readonly string[] = [
@@ -659,6 +683,7 @@ const TOUCH_LINES: readonly string[] = [
   'botao de ajustes   mover, redimensionar,',
   '                   esconder e travar',
   'cadeado            fica ativo sem o dedo',
+  'II no canto        pausar a fase',
 ]
 
 const INSTRUCTION_FOOTER = 'toque na tela ou pressione uma tecla'

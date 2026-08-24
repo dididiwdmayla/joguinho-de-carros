@@ -231,6 +231,35 @@ export function createPowertrainState(mode: TransmissionMode, idleRpm: number): 
   }
 }
 
+/**
+ * The gearbox and the engine as they are handed over at the start of a run:
+ * idling, warm-up ahead of them, in whatever gear that box starts in. Written
+ * in place rather than returned, because the powertrain is held by reference
+ * everywhere that reads it.
+ */
+export function resetPowertrainState(
+  state: PowertrainState,
+  mode: TransmissionMode,
+  idleRpm: number,
+): void {
+  state.mode = mode
+  state.gear = mode === 'manual' ? NEUTRAL_GEAR : 1
+  state.park = false
+  state.rpm = idleRpm
+  state.running = true
+  state.stalled = false
+  state.starter = 0
+  state.clutch = 1
+  state.engagement = 0
+  state.shiftCut = 0
+  state.shiftGuard = 0
+  state.idleTrim = 0
+  state.wheelSlip = 0
+  state.wheelspin = false
+  state.locked = false
+  state.warmth = 0
+}
+
 /** Back to stone cold. An engine handed a new set of numbers is a new engine. */
 export function resetEngineWarmth(state: PowertrainState): void {
   state.warmth = 0

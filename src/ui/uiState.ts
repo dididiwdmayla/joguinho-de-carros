@@ -4,10 +4,12 @@ import { smoothingFactor } from '../core/math'
 import type { FuelCatalog } from '../vehicle/fuel'
 import { CLUTCH_ENGAGE_LIMIT, NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
 import { OPACITY_SLOTS, type ControlConfig, type ControlSlot, type OpacitySlot } from './controlLayout'
+import type { ScreenModel } from './screens'
 import { gearSeat, neutralColumn, type ShifterPattern } from './shifterPattern'
 import type { VehicleSettings } from './vehicleSettings'
 
 export type UiButton =
+  | 'pause'
   | 'menu'
   | 'controls'
   | 'fullscreen'
@@ -100,6 +102,14 @@ export interface UiState {
    */
   readonly controlOpacity: Record<OpacitySlot, number>
 
+  /**
+   * The panel the game flow is showing -- the level list, pause, the result of
+   * a run -- or null while the player is driving. Rebuilt by the loop from the
+   * flow state; nothing here decides what is on it, only draws and hit tests
+   * whatever it was handed.
+   */
+  screen: ScreenModel | null
+
   /** Settings, or the control editor, or neither. */
   menu: MenuScreen
   /**
@@ -172,6 +182,7 @@ export function createUiState(options: UiStateOptions): UiState {
     forwardGears,
     activeControls: new Set<OpacitySlot>(),
     controlOpacity: initialControlOpacity(controls.controlsOpacity),
+    screen: null,
     menu: 'none',
     controls,
     vehicle,

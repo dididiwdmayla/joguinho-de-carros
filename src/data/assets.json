@@ -11,8 +11,8 @@
     "curb_block":    { "path": "assets/props/curb_block.png",      "lengthMeters": 1.8, "widthMeters": 0.3 },
     "planter":       { "path": "assets/props/planter.png",         "lengthMeters": 1.2, "widthMeters": 1.2 },
     "manhole":       { "path": "assets/decals/manhole.png",        "lengthMeters": 0.7, "widthMeters": 0.7 },
-    "oil_stain":     { "path": "assets/decals/oil_stain.png",      "lengthMeters": 1.5, "widthMeters": 1.0 },
-    "crack":         { "path": "assets/decals/crack.png",          "lengthMeters": 2.0, "widthMeters": 0.6 },
+    "oil_stain":     { "path": "assets/decals/oil_stain.png",      "lengthMeters": 1.5, "widthMeters": 1.0, "blend": "multiply" },
+    "crack":         { "path": "assets/decals/crack.png",          "lengthMeters": 2.0, "widthMeters": 0.6, "blend": "multiply" },
     "asphalt_tile":  { "path": "assets/ground/asphalt_tile.png",   "lengthMeters": 16,  "widthMeters": 16 },
     "concrete_tile": { "path": "assets/ground/concrete_tile.png",  "lengthMeters": 16,  "widthMeters": 16 }
   },

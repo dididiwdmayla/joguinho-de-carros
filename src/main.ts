@@ -25,6 +25,7 @@ import { startGame } from './game/game'
 import { createGameState } from './game/state'
 import { InputManager } from './input/InputManager'
 import { loadPedalCurve } from './input/pedalCurve'
+import { loadLevels, spriteKeysForLevels } from './level/levelCatalog'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
 import { loadControlConfig } from './ui/controlLayout'
@@ -41,9 +42,6 @@ import { createUiState, prefersTouchControls } from './ui/uiState'
 import { loadVehicleSettings } from './ui/vehicleSettings'
 import { loadCarParams } from './vehicle/carParams'
 import { applyFuel, loadFuelCatalog, resolveFuel } from './vehicle/fuel'
-
-/** The world this stage drives on. */
-const GROUND_SPRITE_KEY = 'asphalt_tile'
 
 /** Nothing in the boot may take longer than this before it is called failed. */
 const BOOT_TIMEOUT_MS = 10_000
@@ -117,6 +115,10 @@ async function boot(surface: Screen): Promise<void> {
     loadPedalCurve(controlsUrl, 'controls.json'),
     'curva dos pedais (controls.json)',
   )
+  // Every level, up front. They are a few kilobytes between them, and having
+  // them all means the level list can say what each one is and choosing one
+  // costs nothing.
+  const levels = await withTimeout(loadLevels(manifest), 'fases (src/data/levels)')
   const playerSpriteKey = spriteKeyForPath(manifest, carBase.sprite)
   // The gate is drawn from the pattern, so its plate art is only fetched when
   // the texture mode is the one asked for -- the gradient mode needs no
@@ -128,10 +130,14 @@ async function boot(surface: Screen): Promise<void> {
     plateMode === 'texture'
       ? [GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY]
       : [GEAR_KNOB_KEY, STEERING_WHEEL_KEY]
+  // The player's car plus everything any level names: paving, parked cars,
+  // cones, stains. Fetched once, so switching levels never waits on a
+  // download and a missing file fails on the loading screen rather than in
+  // the middle of a run.
+  const spriteKeys = [playerSpriteKey, ...spriteKeysForLevels(levels)]
   const assets = await withTimeout(
-    loadAssets(manifest, [playerSpriteKey, GROUND_SPRITE_KEY], uiKeys),
-    `imagens (${manifest.sprites[playerSpriteKey]?.path ?? playerSpriteKey}, ` +
-      `${manifest.sprites[GROUND_SPRITE_KEY]?.path ?? GROUND_SPRITE_KEY})`,
+    loadAssets(manifest, spriteKeys, uiKeys),
+    `imagens (${spriteKeys.length} sprites)`,
   )
   const audioParams = await withTimeout(
     loadEngineAudioParams(engineAudioUrl, 'engine.json'),
@@ -210,7 +216,7 @@ async function boot(surface: Screen): Promise<void> {
     carBase,
     audio,
     playerSpriteKey,
-    groundSpriteKey: GROUND_SPRITE_KEY,
+    levels,
   })
 
   startGame(state, {
