@@ -104,8 +104,19 @@ export interface CarParams {
   readonly maxBrakeForce: number
   /** Aerodynamic drag factor, force = k*v^2 [N/(m/s)^2]. */
   readonly dragCoefficient: number
-  /** Rolling resistance factor, force = k*v [N/(m/s)]. */
-  readonly rollingResistance: number
+  /**
+   * Rolling resistance coefficient [-]: the force the tyres cost is this times
+   * the vertical load they carry, whatever the speed. Coulomb, not viscous --
+   * a car coasting in neutral loses speed at a constant rate and reaches zero,
+   * instead of halving its way towards it for ever.
+   */
+  readonly rollingResistanceCoefficient: number
+  /**
+   * The part of the rolling loss that really does grow with speed [N/(m/s)]:
+   * bearings, seals, tyre hysteresis. Kept small on purpose -- the Coulomb
+   * term above is the one that decides how the car behaves. May be zero.
+   */
+  readonly rollingDrag: number
   /** Body length [m]. */
   readonly length: number
   /** Body width [m]. */
@@ -144,7 +155,7 @@ const NUMERIC_FIELDS = [
   'steerRate',
   'maxBrakeForce',
   'dragCoefficient',
-  'rollingResistance',
+  'rollingResistanceCoefficient',
   'length',
   'width',
   'wheelWidth',
@@ -296,7 +307,7 @@ export function validatePowertrain(powertrain: PowertrainParams, where: string):
   }
 }
 
-function parseCarParams(raw: unknown, where: string): CarParams {
+export function parseCarParams(raw: unknown, where: string): CarParams {
   const source = readObject(raw, `${where}: raiz`)
 
   const numbers = {} as Record<NumericField, number>
@@ -320,6 +331,7 @@ function parseCarParams(raw: unknown, where: string): CarParams {
   return {
     ...numbers,
     sprite,
+    rollingDrag: readNonNegative(source, 'rollingDrag', where),
     powertrain: parsePowertrain(source['powertrain'], where),
     axleSpan,
     yawInertia: (numbers.mass * (numbers.length * numbers.length + numbers.width * numbers.width)) / 12,

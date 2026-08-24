@@ -46,7 +46,7 @@ function buildLines(frame: DebugFrame): string[] {
     row('Fz R', t.loadRear.toFixed(0), 'N'),
     row('Fy F', t.lateralFront.toFixed(0), 'N'),
     row('Fy R', t.lateralRear.toFixed(0), 'N'),
-    row('blend t', t.blend.toFixed(3), ''),
+    row('regul', t.slipRegularization.toFixed(3), ''),
     row('ax', t.longitudinalAcceleration.toFixed(2), 'm/s2'),
     row('Fx tot', t.longitudinalForce.toFixed(0), 'N'),
     // Energy audit: with nothing driving the car this may only fall, so a
