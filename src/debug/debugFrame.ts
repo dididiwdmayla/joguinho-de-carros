@@ -25,4 +25,6 @@ export interface DebugFrame {
   readonly fps: number
   /** Why the game is or is not making a sound. */
   readonly audio: EngineAudioReadout
+  /** Name of the fuel whose numbers the engine is running on. */
+  readonly fuel: string
 }

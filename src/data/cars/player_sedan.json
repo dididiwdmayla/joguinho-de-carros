@@ -31,6 +31,8 @@
     ],
     "idleRpm": 850,
     "stallRpm": 450,
+    "coldStallBonus": 0,
+    "warmupTime": 40,
     "maxRpm": 7000,
     "engineInertia": 0.25,
     "engineBraking": 0.035,

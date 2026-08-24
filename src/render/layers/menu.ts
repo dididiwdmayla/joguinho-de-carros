@@ -27,14 +27,28 @@ import {
   GLYPH,
   PANEL_FILL_SOLID,
   PANEL_STROKE,
+  rowTextWidth,
 } from './uiStyle'
 
 const SCRIM = 'rgba(8, 10, 14, 0.72)'
 const EDIT_SCRIM = 'rgba(8, 10, 14, 0.55)'
+const TITLE_COLOR = 'rgba(127, 178, 232, 0.9)'
+/** Section notes and the fuel's own line: present, but never shouting. */
+const NOTE_COLOR = 'rgba(196, 210, 222, 0.6)'
+/** The rule between the two halves of the menu. */
+const DIVIDER = 'rgba(255, 255, 255, 0.12)'
+const MENU_FONT = 'system-ui, -apple-system, Segoe UI, sans-serif'
+/** A hint gets two lines before it starts being shrunk to fit. */
+const MAX_HINT_LINES = 2
+/** Type size inside a menu row, as a fraction of the row's height. */
+const ROW_TEXT = 0.34
 
 export function drawMenu(context: RenderContext): void {
   const { ctx, viewport } = context
   const menu = computeMenuLayout(viewport, context.ui)
+  // Rows inset their own text by this much, and the section headings above
+  // them line up with it rather than with the edge of the panel.
+  const inset = menu.rowHeight * 0.4
 
   inScreenSpace(context, () => {
     ctx.fillStyle = SCRIM
@@ -48,21 +62,144 @@ export function drawMenu(context: RenderContext): void {
     ctx.fill()
     ctx.stroke()
 
-    const titleSize = Math.max(11, panel.width * 0.045)
-    ctx.font = `600 ${titleSize.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
-    ctx.fillStyle = 'rgba(127, 178, 232, 0.9)'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(menu.title, panel.x + panel.width / 2, panel.y + titleSize * 1.5)
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'alphabetic'
+    drawCentred(ctx, menu.titleRect, menu.title, 0.72, TITLE_COLOR)
 
-    for (const row of menu.rows) {
-      drawButtonBox(ctx, row.rect, false)
-      drawRowLabel(ctx, row.rect, row.label, 0.34)
-      if (row.value.length > 0) drawRowValue(ctx, row.rect, row.value, 0.34)
+    if (menu.divider !== null) {
+      ctx.fillStyle = DIVIDER
+      ctx.fillRect(menu.divider.x, menu.divider.y, menu.divider.width, menu.divider.height)
     }
+
+    for (const section of menu.sections) {
+      drawAligned(ctx, section.titleRect, section.title, 0.68, ACCENT, inset)
+      drawAligned(ctx, section.noteRect, section.note, 0.68, NOTE_COLOR, inset)
+
+      for (const row of section.rows) {
+        drawButtonBox(ctx, row.rect, false)
+        // The value takes what it needs, up to half the row, and the label
+        // gets the rest. A fixed split would either cramp "SIMULACAO" or
+        // shrink every label on the panel to make room for it.
+        const edges = row.rect.height * 0.4 * 2 + row.rect.height * 0.4
+        const free = row.rect.width - edges
+        const value = row.value.length === 0
+          ? 0
+          : Math.min(rowTextWidth(ctx, row.value, row.rect, ROW_TEXT), free * 0.55)
+        drawRowLabel(ctx, row.rect, row.label, ROW_TEXT, GLYPH, free - value)
+        if (row.value.length > 0) {
+          drawRowValue(ctx, row.rect, row.value, ROW_TEXT, ACCENT, value)
+        }
+      }
+
+      if (section.hintRect !== null) {
+        drawWrapped(ctx, section.hintRect, section.hint, NOTE_COLOR, inset)
+      }
+    }
+
+    drawButtonBox(ctx, menu.close.rect, false)
+    drawLabel(ctx, menu.close.rect, menu.close.label, ROW_TEXT)
   })
+}
+
+/** One line of type, left-aligned to the same inset the rows use. */
+function drawAligned(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  text: string,
+  scale: number,
+  color: string,
+  inset: number,
+): void {
+  const size = fitText(ctx, text, rect.height * scale, rect.width - inset * 2)
+  ctx.fillStyle = color
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, rect.x + inset, rect.y + rect.height / 2 + size * 0.05)
+  ctx.textBaseline = 'alphabetic'
+}
+
+function drawCentred(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  text: string,
+  scale: number,
+  color: string,
+): void {
+  fitText(ctx, text, rect.height * scale, rect.width * 0.9)
+  ctx.fillStyle = color
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, rect.x + rect.width / 2, rect.y + rect.height / 2)
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+}
+
+/**
+ * The fuel's one line about itself, over two lines if that is what it takes.
+ * Wrapped rather than shrunk: a sentence squeezed onto one line ends up too
+ * small to read, which defeats the point of writing it.
+ */
+function drawWrapped(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  text: string,
+  color: string,
+  inset: number,
+): void {
+  const available = rect.width - inset * 2
+  const size = fitText(ctx, text, rect.height * 0.4, available * MAX_HINT_LINES)
+  const lines = wrapText(ctx, text, available, MAX_HINT_LINES)
+  const lineHeight = size * 1.25
+  const first = rect.y + rect.height / 2 - ((lines.length - 1) * lineHeight) / 2
+
+  ctx.fillStyle = color
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], rect.x + inset, first + i * lineHeight)
+  }
+  ctx.textBaseline = 'alphabetic'
+}
+
+/** Sets the font at `size`, shrunk until the text fits in `available`. */
+function fitText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  size: number,
+  available: number,
+): number {
+  let chosen = Math.max(8, size)
+  ctx.font = `600 ${chosen.toFixed(0)}px ${MENU_FONT}`
+  const natural = ctx.measureText(text).width
+  if (natural > available) {
+    chosen = Math.max(7, chosen * (available / natural))
+    ctx.font = `600 ${chosen.toFixed(0)}px ${MENU_FONT}`
+  }
+  return chosen
+}
+
+/** Greedy word wrap, with the tail crammed onto the last line it is given. */
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  available: number,
+  maxLines: number,
+): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(' ')) {
+    const candidate = line.length === 0 ? word : `${line} ${word}`
+    if (ctx.measureText(candidate).width <= available || line.length === 0) {
+      line = candidate
+      continue
+    }
+    if (lines.length === maxLines - 1) {
+      line = candidate
+      continue
+    }
+    lines.push(line)
+    line = word
+  }
+  lines.push(line)
+  return lines
 }
 
 // ------------------------------------------------------------------- editor

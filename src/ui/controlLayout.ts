@@ -71,11 +71,52 @@ export const LATCHABLE_SLOTS: ReadonlySet<ControlSlot> = new Set<ControlSlot>([
 export type SteeringStyle = 'bar' | 'wheel'
 
 /**
- * How far the wheel turns from centre to full lock [rad]. Half a turn each
- * way: enough that the angle reads clearly under a thumb, little enough that
- * the hand never has to leave the glass to reach the stop.
+ * Turns of the wheel from one stop to the other, as the player may set it.
+ *
+ * It costs nothing but precision, which is why it lives under CONTROLE: a
+ * quick rack and a slow one reach the same lock, they only ask for more or
+ * less hand to get there. Three turns is what a real car without power
+ * steering asks for; one and a half is what an arcade gives you.
  */
-export const WHEEL_MAX_ANGLE = Math.PI
+export const WHEEL_TURN_OPTIONS: readonly number[] = [1.5, 2, 2.5, 3]
+
+export const DEFAULT_WHEEL_TURNS = 2
+
+/** How far the wheel turns from centre to full lock [rad]. */
+export function wheelMaxAngle(turns: number): number {
+  return (turns * Math.PI * 2) / 2
+}
+
+/** The next setting up, wrapping round to the quickest. */
+export function nextWheelTurns(turns: number): number {
+  const index = WHEEL_TURN_OPTIONS.indexOf(nearestWheelTurns(turns))
+  return WHEEL_TURN_OPTIONS[(index + 1) % WHEEL_TURN_OPTIONS.length]
+}
+
+/** The offered setting closest to a number, however that number arrived. */
+export function nearestWheelTurns(turns: number): number {
+  let best = DEFAULT_WHEEL_TURNS
+  let distance = Number.POSITIVE_INFINITY
+  for (const option of WHEEL_TURN_OPTIONS) {
+    const gap = Math.abs(option - turns)
+    if (gap < distance) {
+      distance = gap
+      best = option
+    }
+  }
+  return best
+}
+
+/**
+ * The setting as the menu shows it. The two ends are named rather than left
+ * as numbers: "3.0" says nothing, "3.0 SIMULACAO" says what it is for.
+ */
+export function wheelTurnsLabel(turns: number): string {
+  const value = turns.toFixed(1)
+  if (turns <= WHEEL_TURN_OPTIONS[0]) return `${value} RAPIDO`
+  if (turns >= WHEEL_TURN_OPTIONS[WHEEL_TURN_OPTIONS.length - 1]) return `${value} SIMULACAO`
+  return value
+}
 
 export type PresetId = 'padrao' | 'canhoto' | 'compacto'
 
@@ -107,6 +148,8 @@ export type ControlPlacements = Record<ControlSlot, ControlPlacement | null>
 
 export interface ControlConfig {
   steeringStyle: SteeringStyle
+  /** Turns from stop to stop, one of WHEEL_TURN_OPTIONS. */
+  wheelTurns: number
   /** Only a label: the preset is materialised into placements when applied. */
   preset: PresetId
   placements: ControlPlacements
@@ -126,7 +169,12 @@ export function emptyPlacements(): ControlPlacements {
 }
 
 export function defaultControlConfig(): ControlConfig {
-  return { steeringStyle: 'bar', preset: 'padrao', placements: emptyPlacements() }
+  return {
+    steeringStyle: 'bar',
+    wheelTurns: DEFAULT_WHEEL_TURNS,
+    preset: 'padrao',
+    placements: emptyPlacements(),
+  }
 }
 
 // ------------------------------------------------------------------ presets
@@ -196,6 +244,12 @@ export function loadControlConfig(): ControlConfig {
 
   if (source['steeringStyle'] === 'wheel' || source['steeringStyle'] === 'bar') {
     config.steeringStyle = source['steeringStyle']
+  }
+  const wheelTurns = source['wheelTurns']
+  if (typeof wheelTurns === 'number' && Number.isFinite(wheelTurns)) {
+    // Snapped rather than trusted: a build with a different set of settings,
+    // or a hand-edited file, still has to land on one this one offers.
+    config.wheelTurns = nearestWheelTurns(wheelTurns)
   }
   const preset = source['preset']
   if (typeof preset === 'string' && (PRESET_IDS as readonly string[]).includes(preset)) {

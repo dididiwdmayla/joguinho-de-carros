@@ -18,6 +18,13 @@ export interface PowertrainParams {
   readonly idleRpm: number
   /** Below this, a loaded engine dies [rpm]. */
   readonly stallRpm: number
+  /**
+   * Added to `stallRpm` while the engine is stone cold, fading out as it warms
+   * [rpm]. Zero on an engine that does not care.
+   */
+  readonly coldStallBonus: number
+  /** How long a cold engine takes to reach working temperature at idle [s]. */
+  readonly warmupTime: number
   /** Rev limiter [rpm]. */
   readonly maxRpm: number
   /** Rotating inertia of the crankshaft and flywheel [kg*m^2]. */
@@ -147,6 +154,7 @@ const POWERTRAIN_FIELDS = [
   'idleRpm',
   'stallRpm',
   'maxRpm',
+  'warmupTime',
   'engineInertia',
   'engineBraking',
   'clutchStiffness',
@@ -179,6 +187,15 @@ function readPositive(source: Record<string, unknown>, field: string, where: str
   const value = source[field]
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     throw new Error(`${where}: "${field}" deve ser um numero positivo`)
+  }
+  return value
+}
+
+/** Same, for a number that is allowed to be zero: a bonus, an offset. */
+function readNonNegative(source: Record<string, unknown>, field: string, where: string): number {
+  const value = source[field]
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${where}: "${field}" deve ser um numero maior ou igual a zero`)
   }
   return value
 }
@@ -243,20 +260,35 @@ function parsePowertrain(raw: unknown, where: string): PowertrainParams {
   const powertrain: PowertrainParams = {
     ...numbers,
     reverseRatio,
+    coldStallBonus: readNonNegative(source, 'coldStallBonus', `${where}.powertrain`),
     torqueCurve: parseTorqueCurve(source['torqueCurve'], `${where}.powertrain`),
     gearRatios: parseGearRatios(source['gearRatios'], `${where}.powertrain`),
   }
 
+  validatePowertrain(powertrain, `${where}.powertrain`)
+  return powertrain
+}
+
+/**
+ * The rules an engine has to obey whoever wrote its numbers -- the JSON on
+ * disk, or a fuel type overwriting some of them. Kept in one place precisely
+ * because there is now more than one way to arrive at a set of them.
+ */
+export function validatePowertrain(powertrain: PowertrainParams, where: string): void {
   if (powertrain.stallRpm >= powertrain.idleRpm) {
-    throw new Error(`${where}.powertrain: "stallRpm" precisa ser menor que "idleRpm"`)
+    throw new Error(`${where}: "stallRpm" precisa ser menor que "idleRpm"`)
+  }
+  // A cold engine that cannot hold its own idle would die the moment a gear
+  // went in, every time, and no amount of clutch control would save it.
+  if (powertrain.stallRpm + powertrain.coldStallBonus >= powertrain.idleRpm) {
+    throw new Error(`${where}: "stallRpm" + "coldStallBonus" precisa ser menor que "idleRpm"`)
   }
   if (powertrain.downshiftRpm >= powertrain.upshiftRpm) {
-    throw new Error(`${where}.powertrain: "downshiftRpm" precisa ser menor que "upshiftRpm"`)
+    throw new Error(`${where}: "downshiftRpm" precisa ser menor que "upshiftRpm"`)
   }
   if (powertrain.upshiftRpm >= powertrain.maxRpm) {
-    throw new Error(`${where}.powertrain: "upshiftRpm" precisa ser menor que "maxRpm"`)
+    throw new Error(`${where}: "upshiftRpm" precisa ser menor que "maxRpm"`)
   }
-  return powertrain
 }
 
 function parseCarParams(raw: unknown, where: string): CarParams {

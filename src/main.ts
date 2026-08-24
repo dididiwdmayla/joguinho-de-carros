@@ -1,7 +1,7 @@
 /**
  * Bootstrap: load the data, wire the pieces together, start the loop.
  *
- * Both JSON files live in src/data and are fetched at runtime by URL, so the
+ * Every JSON file lives in src/data and is fetched at runtime by URL, so the
  * numbers that define the world are never baked into the code.
  *
  * Every stage is wrapped: nothing here may fail in silence. A rejected
@@ -11,6 +11,7 @@
 import manifestUrl from './data/assets.json?url'
 import engineAudioUrl from './data/audio/engine.json?url'
 import playerSedanUrl from './data/cars/player_sedan.json?url'
+import fuelsUrl from './data/fuels.json?url'
 
 import { loadEngineAudioParams } from './audio/audioParams'
 import { createEngineAudio, resumeEngineAudio, setEngineAudioAudible } from './audio/engineAudio'
@@ -18,14 +19,16 @@ import { loadAssets } from './assets/loader'
 import { loadManifest, spriteKeyForPath } from './assets/manifest'
 import { describeError, drawBootMessage } from './game/bootScreen'
 import { startGame } from './game/game'
-import { createGameState, INITIAL_TRANSMISSION_MODE } from './game/state'
+import { createGameState } from './game/state'
 import { InputManager } from './input/InputManager'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
 import { loadControlConfig } from './ui/controlLayout'
 import { GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY } from './ui/touchLayout'
 import { createUiState, prefersTouchControls } from './ui/uiState'
+import { loadVehicleSettings } from './ui/vehicleSettings'
 import { loadCarParams } from './vehicle/carParams'
+import { applyFuel, loadFuelCatalog, resolveFuel } from './vehicle/fuel'
 
 /** The world this stage drives on. */
 const GROUND_SPRITE_KEY = 'asphalt_tile'
@@ -86,11 +89,15 @@ async function boot(surface: Screen): Promise<void> {
   drawBootMessage(surface.canvas, surface.ctx, surface.viewport, ['carregando...'], '#8b98a5')
 
   const manifest = await withTimeout(loadManifest(manifestUrl), 'manifesto de assets (assets.json)')
-  const car = await withTimeout(
+  const carBase = await withTimeout(
     loadCarParams(playerSedanUrl, 'player_sedan.json'),
     'parametros do carro (player_sedan.json)',
   )
-  const playerSpriteKey = spriteKeyForPath(manifest, car.sprite)
+  const fuels = await withTimeout(
+    loadFuelCatalog(fuelsUrl, 'fuels.json'),
+    'tipos de combustivel (fuels.json)',
+  )
+  const playerSpriteKey = spriteKeyForPath(manifest, carBase.sprite)
   const assets = await withTimeout(
     loadAssets(
       manifest,
@@ -108,6 +115,13 @@ async function boot(surface: Screen): Promise<void> {
     'parametros de audio (engine.json)',
   )
 
+  // Whatever the player last chose, checked against the catalog that was
+  // actually loaded. Pouring the fuel in is all that ever happens to it: what
+  // comes back is a car, and nothing downstream can tell it apart from one
+  // somebody authored. The game state resolves its own copy the same way.
+  const vehicle = loadVehicleSettings(fuels)
+  const car = applyFuel(carBase, resolveFuel(fuels, vehicle.fuel))
+
   // Built now, opened later: no browser lets a page make a sound before the
   // player has touched it, so until then the game simply runs in silence.
   const audio = createEngineAudio(audioParams, {
@@ -116,12 +130,13 @@ async function boot(surface: Screen): Promise<void> {
   })
 
   // Whatever layout the player left behind last time, or the built-in one.
-  const ui = createUiState(
-    prefersTouchControls(),
-    INITIAL_TRANSMISSION_MODE,
-    car.powertrain.gearRatios.length,
-    loadControlConfig(),
-  )
+  const ui = createUiState({
+    controlsVisible: prefersTouchControls(),
+    forwardGears: car.powertrain.gearRatios.length,
+    controls: loadControlConfig(),
+    vehicle,
+    fuels,
+  })
   const input = new InputManager({
     canvas: surface.canvas,
     viewport: surface.viewport,
@@ -158,7 +173,7 @@ async function boot(surface: Screen): Promise<void> {
     assets,
     input,
     ui,
-    car,
+    carBase,
     audio,
     playerSpriteKey,
     groundSpriteKey: GROUND_SPRITE_KEY,

@@ -3,7 +3,7 @@
  * here and is passed around by reference; no module keeps hidden globals.
  */
 import type { AssetStore } from '../assets/loader'
-import type { EngineAudio } from '../audio/engineAudio'
+import { setEngineReference, type EngineAudio } from '../audio/engineAudio'
 import type { InputManager } from '../input/InputManager'
 import {
   copyCameraState,
@@ -17,20 +17,15 @@ import type { PowertrainReadout, Scene, VehicleRenderState } from '../render/sce
 import type { Viewport } from '../render/viewport'
 import type { UiState } from '../ui/uiState'
 import type { CarParams } from '../vehicle/carParams'
+import { applyFuel, resolveFuel } from '../vehicle/fuel'
 import { createTelemetry, type VehicleTelemetry } from '../vehicle/physics'
 import {
   createPowertrainState,
+  resetEngineWarmth,
   transmissionModeLabel,
   type PowertrainState,
-  type TransmissionMode,
 } from '../vehicle/powertrain'
 import { createVehicleState, type VehicleState } from '../vehicle/vehicleState'
-
-/**
- * How the car is handed over on the first frame. Automatic, in drive: the game
- * has to be drivable before anyone has read which key changes the gearbox.
- */
-export const INITIAL_TRANSMISSION_MODE: TransmissionMode = 'automatic'
 
 export interface GameState {
   readonly canvas: HTMLCanvasElement
@@ -42,7 +37,16 @@ export interface GameState {
   /** Silent until a gesture opens the device; the loop feeds it regardless. */
   readonly audio: EngineAudio
 
-  readonly car: CarParams
+  /**
+   * The car as it is being driven: the authored numbers with the chosen fuel
+   * already poured into them. Replaced outright when the fuel changes, which
+   * is the only way a fuel ever reaches the physics.
+   */
+  car: CarParams
+  /** The car as the JSON authored it, the starting point of every fuel. */
+  readonly carBase: CarParams
+  /** Fuel currently resolved into `car`, so a change can be noticed. */
+  fuelId: string
   /** Authoritative simulation state, advanced at a fixed 60 Hz. */
   readonly vehicle: VehicleState
   /** State before the last physics step, used to interpolate the render. */
@@ -80,7 +84,8 @@ export interface GameStateOptions {
   assets: AssetStore
   input: InputManager
   ui: UiState
-  car: CarParams
+  /** The car as authored; the fuel the player has chosen is poured in here. */
+  carBase: CarParams
   audio: EngineAudio
   playerSpriteKey: string
   groundSpriteKey: string
@@ -89,8 +94,12 @@ export interface GameStateOptions {
 export function createGameState(options: GameStateOptions): GameState {
   const vehicle = createVehicleState(0, 0, 0)
   const camera = createCameraState(vehicle.x, vehicle.y)
-  const { car } = options
-  const powertrain = createPowertrainState(INITIAL_TRANSMISSION_MODE, car.powertrain.idleRpm)
+  const fuel = resolveFuel(options.ui.fuels, options.ui.vehicle.fuel)
+  const car = applyFuel(options.carBase, fuel)
+  const powertrain = createPowertrainState(
+    options.ui.vehicle.transmission,
+    car.powertrain.idleRpm,
+  )
 
   const playerRender: VehicleRenderState = {
     spriteKey: options.playerSpriteKey,
@@ -122,6 +131,8 @@ export function createGameState(options: GameStateOptions): GameState {
     ui: options.ui,
     audio: options.audio,
     car,
+    carBase: options.carBase,
+    fuelId: fuel.id,
     vehicle,
     vehiclePrevious: createVehicleState(vehicle.x, vehicle.y, vehicle.yaw),
     powertrain,
@@ -142,4 +153,26 @@ export function createGameState(options: GameStateOptions): GameState {
     lastTimestamp: -1,
     fps: 60,
   }
+}
+
+/**
+ * Pours the chosen fuel into the car and hands the result to everything that
+ * reads it. Called whenever the choice changes, and it is the whole of what
+ * changing fuel means: fresh numbers, and an engine that is cold again.
+ *
+ * The engine is never told which fuel this was. It is given a set of numbers
+ * and has no way of asking where they came from.
+ */
+export function applySelectedFuel(state: GameState): void {
+  const fuel = resolveFuel(state.ui.fuels, state.ui.vehicle.fuel)
+  state.ui.vehicle.fuel = fuel.id
+  state.car = applyFuel(state.carBase, fuel)
+  state.fuelId = fuel.id
+  // The synthesiser voices rpm against idle and the limiter, both of which a
+  // fuel is allowed to move.
+  setEngineReference(state.audio, {
+    idleRpm: state.car.powertrain.idleRpm,
+    maxRpm: state.car.powertrain.maxRpm,
+  })
+  resetEngineWarmth(state.powertrain)
 }
