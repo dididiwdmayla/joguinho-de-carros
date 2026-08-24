@@ -37,7 +37,12 @@ export interface PowertrainParams {
   readonly clutchMaxTorque: number
   /** How fast the pedal goes down while the control is held [1/s]. */
   readonly clutchPressRate: number
-  /** How fast the pedal comes back up once it is released [1/s]. */
+  /**
+   * How fast the pedal comes back up once it is released [1/s]. This is the
+   * pedal's own spring, not a driver's foot: a foot that feathers the clutch
+   * moves the target slowly and is never near this limit, so the number only
+   * decides how violently a dumped clutch takes hold.
+   */
   readonly clutchReleaseRate: number
   /**
    * Rolling radius of the driven wheels [m]. Deliberately independent of

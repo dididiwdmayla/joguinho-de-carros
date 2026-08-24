@@ -72,6 +72,14 @@ function advanceFrame(state: GameState, timestamp: number): void {
       : clamp((timestamp - previous) / 1000, 0, FIXED_DT * MAX_STEPS_PER_FRAME)
   if (elapsed > 0) state.fps += (1 / elapsed - state.fps) * FPS_SMOOTHING
 
+  // Gear changes and the like act once, before the steps that follow: pressing
+  // a key must never mean two gears because the frame ran long. They are also
+  // taken before the gearbox is mirrored below, so a lever let go of never
+  // spends a frame drawn back in the gear the box has not left yet.
+  for (const command of state.input.drainCommands()) {
+    applyPowertrainCommand(state.powertrain, state.car.powertrain, command, state.vehicle.vx)
+  }
+
   // The gearbox tells the controls what it is, so the input layer can lay out
   // the right shifter and refuse a gear the clutch will not allow -- without
   // reaching into the simulation itself.
@@ -83,13 +91,7 @@ function advanceFrame(state: GameState, timestamp: number): void {
   syncShifterToGear(state.ui)
 
   // Input is sampled once per frame and reused by every step of that frame.
-  const input = state.input.sample(elapsed)
-
-  // Gear changes and the like act once, before the steps that follow: pressing
-  // a key must never mean two gears because the frame ran long.
-  for (const command of state.input.drainCommands()) {
-    applyPowertrainCommand(state.powertrain, state.car.powertrain, command, state.vehicle.vx)
-  }
+  const input = state.input.sample()
 
   syncVehicleSettings(state)
 
