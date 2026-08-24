@@ -14,6 +14,7 @@
 import { PAINT_WIDTH } from '../../level/levelRuntime'
 import { inWorldSpace } from '../renderer'
 import type { RenderContext, SlotRender } from '../scene'
+import { drawSpriteMeters } from '../sprite'
 
 /** The line paint, before its per-segment wear is applied. */
 const PAINT_COLOR = '236, 238, 233'
@@ -43,19 +44,7 @@ export function drawDecals(context: RenderContext): void {
       if (sprite.blend === 'multiply') ctx.globalCompositeOperation = 'multiply'
       ctx.translate(decal.x, decal.y)
       ctx.rotate(decal.yaw)
-      const length = sprite.lengthMeters * decal.scale
-      const width = sprite.widthMeters * decal.scale
-      ctx.drawImage(
-        sprite.image,
-        sprite.trim.x,
-        sprite.trim.y,
-        sprite.trim.width,
-        sprite.trim.height,
-        -length / 2,
-        -width / 2,
-        length,
-        width,
-      )
+      drawSpriteMeters(ctx, sprite, decal.scale)
       ctx.restore()
     }
 

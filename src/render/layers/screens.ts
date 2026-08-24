@@ -12,6 +12,7 @@ import {
   formatTime,
   type ScreenCardLayout,
   type ScreenModel,
+  type ScreenStatLayout,
 } from '../../ui/screens'
 import type { Rect } from '../../ui/touchLayout'
 import { inScreenSpace } from '../renderer'
@@ -32,6 +33,9 @@ const TITLE_COLOR = 'rgba(158, 203, 255, 0.95)'
 const MUTED = 'rgba(196, 210, 222, 0.62)'
 const STAR_ON = '#f2c65c'
 const STAR_OFF = 'rgba(226, 236, 245, 0.18)'
+/** A criterion met, and one missed. */
+const PASS = '#7fe0a0'
+const FAIL = '#ff8f9e'
 const DISABLED_ALPHA = 0.35
 
 export function drawScreen(context: RenderContext, model: ScreenModel): void {
@@ -58,10 +62,7 @@ export function drawScreen(context: RenderContext, model: ScreenModel): void {
       drawStarRow(ctx, layout.starsRect, model.stars, layout.starsRect.height * 0.86)
     }
 
-    for (const stat of layout.stats) {
-      drawRowLabel(ctx, stat.rect, stat.label, 0.36, MUTED)
-      drawRowValue(ctx, stat.rect, stat.value, 0.38, stat.highlight === true ? STAR_ON : GLYPH)
-    }
+    for (const stat of layout.stats) drawStatRow(ctx, stat)
 
     for (const card of layout.cards) drawCard(ctx, card)
 
@@ -73,6 +74,54 @@ export function drawScreen(context: RenderContext, model: ScreenModel): void {
       ctx.restore()
     }
   })
+}
+
+/**
+ * One row of numbers. A row that was judged gives up the space at its right
+ * edge to a tick or a cross and is coloured by the verdict, so the criteria
+ * that cost a star can be picked out without reading any of them.
+ */
+function drawStatRow(ctx: CanvasRenderingContext2D, stat: ScreenStatLayout): void {
+  const judged = stat.passed !== undefined
+  const mark = judged ? stat.rect.height : 0
+  const textRect: Rect = { ...stat.rect, width: stat.rect.width - mark }
+
+  drawRowLabel(ctx, textRect, stat.label, 0.36, MUTED)
+  const color = judged ? (stat.passed === true ? PASS : FAIL) : stat.highlight === true ? STAR_ON : GLYPH
+  drawRowValue(ctx, textRect, stat.value, 0.38, color)
+
+  if (!judged) return
+  drawVerdict(
+    ctx,
+    { x: stat.rect.x + stat.rect.width - mark, y: stat.rect.y, width: mark, height: mark },
+    stat.passed === true,
+  )
+}
+
+/** A tick or a cross, drawn in the square a judged row reserves for it. */
+function drawVerdict(ctx: CanvasRenderingContext2D, rect: Rect, passed: boolean): void {
+  const centerX = rect.x + rect.width / 2
+  const centerY = rect.y + rect.height / 2
+  const reach = rect.height * 0.22
+
+  ctx.save()
+  ctx.strokeStyle = passed ? PASS : FAIL
+  ctx.lineWidth = Math.max(1.5, rect.height * 0.1)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  if (passed) {
+    ctx.moveTo(centerX - reach, centerY)
+    ctx.lineTo(centerX - reach * 0.25, centerY + reach * 0.75)
+    ctx.lineTo(centerX + reach, centerY - reach * 0.75)
+  } else {
+    ctx.moveTo(centerX - reach * 0.8, centerY - reach * 0.8)
+    ctx.lineTo(centerX + reach * 0.8, centerY + reach * 0.8)
+    ctx.moveTo(centerX + reach * 0.8, centerY - reach * 0.8)
+    ctx.lineTo(centerX - reach * 0.8, centerY + reach * 0.8)
+  }
+  ctx.stroke()
+  ctx.restore()
 }
 
 /** One level in the list: number and name, its stars, and the best time. */

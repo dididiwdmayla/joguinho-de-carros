@@ -4,7 +4,7 @@
  */
 import type { AssetStore } from '../assets/loader'
 import { setEngineReference, type EngineAudio } from '../audio/engineAudio'
-import { createObb } from '../collision/obb'
+import { createObb, type Obb } from '../collision/obb'
 import type { ColliderMotion, VehicleCollider } from '../collision/vehicleCollision'
 import type { InputManager } from '../input/InputManager'
 import type { LevelDefinition } from '../level/levelSchema'
@@ -31,17 +31,6 @@ import {
 } from '../vehicle/powertrain'
 import { createVehicleState, type VehicleState } from '../vehicle/vehicleState'
 import { createFlowState, type FlowState } from './flow'
-
-/**
- * How much smaller the car's collision box is than its artwork, per side.
- *
- * Five per cent, and it is there to be generous. A box that matches the sprite
- * exactly reports a hit the instant two pixels touch, and to a player easing up
- * to a wall that reads as the game stopping them before they arrived. A little
- * slack forgives the last pixel and costs nothing anybody can see -- what the
- * player feels is a car that stops when it looks like it should.
- */
-export const COLLISION_MARGIN = 0.05
 
 /**
  * How much a hit bounces. Nearly nothing on purpose: the car must never be
@@ -94,6 +83,15 @@ export interface GameState {
   readonly collider: VehicleCollider
   /** Scratch the collision response reads and writes, once per step. */
   readonly colliderMotion: ColliderMotion
+  /**
+   * The same box at the pose being drawn, for the overlay that outlines it.
+   *
+   * A copy rather than the collider's own: that one is at the last simulation
+   * step, and the frame is drawn interpolated between two of them. Outlining
+   * the step's box over the interpolated car is how a debug view ends up
+   * showing a mismatch it invented itself.
+   */
+  readonly colliderView: Obb
 
   readonly camera: CameraState
   readonly cameraPrevious: CameraState
@@ -184,15 +182,18 @@ export function createGameState(options: GameStateOptions): GameState {
     vehiclePrevious: createVehicleState(vehicle.x, vehicle.y, vehicle.yaw),
     powertrain,
     telemetry: createTelemetry(powertrain),
-    // The box comes from the manifest, never from the car file and never from
-    // the PNG: the sprite on screen is drawn at those metres, so a box built
-    // from anything else would be a box the player cannot see.
+    // The box is the bodywork, to the centimetre: the same metres the loader
+    // sized the artwork by, with nothing added for luck and nothing shaved off
+    // for forgiveness. A box a hand's width bigger than the car is a car that
+    // stops short of everything it approaches, and a box smaller than the car
+    // is one that parks itself through a van. There is one number, and the
+    // drawing and the physics both read it.
     collider: {
       box: createObb(
         vehicle.x,
         vehicle.y,
-        playerSprite.lengthMeters * (1 - COLLISION_MARGIN),
-        playerSprite.widthMeters * (1 - COLLISION_MARGIN),
+        playerSprite.lengthMeters,
+        playerSprite.widthMeters,
         vehicle.yaw,
       ),
       mass: car.mass,
@@ -201,6 +202,13 @@ export function createGameState(options: GameStateOptions): GameState {
       friction: CONTACT_FRICTION,
     },
     colliderMotion: { x: 0, y: 0, vx: 0, vy: 0, yaw: 0, yawRate: 0 },
+    colliderView: createObb(
+      vehicle.x,
+      vehicle.y,
+      playerSprite.lengthMeters,
+      playerSprite.widthMeters,
+      vehicle.yaw,
+    ),
     camera,
     cameraPrevious,
     cameraView: createCameraView(),

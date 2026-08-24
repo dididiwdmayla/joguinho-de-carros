@@ -5,12 +5,15 @@
  * a run with any failed expectation throws at the end, which is a non-zero
  * exit code for whatever is calling it.
  *
- * Three things are being proved here. That the separating axis test and the
- * response do what a car hitting scenery should do -- stop without bouncing,
+ * What is being proved here. That a sprite is measured to its bodywork, so the
+ * box the physics uses is the car the player sees. That the separating axis
+ * test and the response do what a car hitting scenery should do -- stop
+ * without bouncing, stop against what it touched rather than short of it,
  * slide along a wall taken at a shallow angle, never end up outside the lot.
- * That parking means what the brief says it means, hold included. And that
- * every level that ships can actually be driven: the spawn is clear, the bay
- * is clear, and there is a way in and out of it wide enough for the car.
+ * That parking means what the brief says it means, hold included, and that a
+ * clean run is scored as one. And that every level that ships can actually be
+ * driven: the bays are as tight as they are meant to be, there is a manoeuvre
+ * from the spawn into each of them, and all three gearboxes can perform it.
  */
 import manifestJson from '../data/assets.json' with { type: 'json' }
 import sedanJson from '../data/cars/player_sedan.json' with { type: 'json' }
@@ -21,7 +24,8 @@ import level04 from '../data/levels/04-van-e-pickup.json' with { type: 'json' }
 import level05 from '../data/levels/05-baliza-apertada.json' with { type: 'json' }
 
 import type { AssetManifest } from '../assets/manifest'
-import type { AssetStore, LoadedSprite } from '../assets/loader'
+import { spriteQuad, type AssetStore, type LoadedSprite } from '../assets/loader'
+import { measureSpriteBounds } from '../assets/spriteBounds'
 import { buildGrid, queryGrid } from '../collision/grid'
 import {
   collideObb,
@@ -39,13 +43,18 @@ import {
 } from '../collision/vehicleCollision'
 import { boundsOf, createWorld, type CollisionWorld } from '../collision/world'
 import { FIXED_DT } from '../core/constants'
-import { radToDeg } from '../core/math'
-import { COLLISION_MARGIN } from '../game/state'
+import { clamp, radToDeg } from '../core/math'
 import { isBetter, type LevelRecord } from '../game/progress'
 import { createInputState } from '../input/input'
 import { parseCarParams, type CarParams } from '../vehicle/carParams'
 import { createTelemetry, stepVehicle } from '../vehicle/physics'
-import { createPowertrainState, NEUTRAL_GEAR } from '../vehicle/powertrain'
+import {
+  applyPowertrainCommand,
+  createPowertrainState,
+  NEUTRAL_GEAR,
+  REVERSE_GEAR,
+  type PowertrainCommand,
+} from '../vehicle/powertrain'
 import { createVehicleState, type VehicleState } from '../vehicle/vehicleState'
 import {
   advanceRun,
@@ -58,6 +67,7 @@ import {
   resumeRun,
 } from '../game/flow'
 import { buildLevel, boundaryWalls, type LevelRuntime } from './levelRuntime'
+import { reachTargetBay } from './reachability'
 import { checkParking, createParkingCheck, createParkingState, stepParking } from './parking'
 import { parseLevel, validateLevelSprites, type LevelDefinition } from './levelSchema'
 import { scoreRun } from './scoring'
@@ -95,6 +105,12 @@ function fakeAssets(): AssetStore {
         lengthMeters: entry.lengthMeters,
         widthMeters: entry.widthMeters,
         trim: { x: 0, y: 0, width: 1, height: 1 },
+        quad: {
+          x: -entry.lengthMeters / 2,
+          y: -entry.widthMeters / 2,
+          width: entry.lengthMeters,
+          height: entry.widthMeters,
+        },
         blend: entry.blend,
       }
       cache.set(key, sprite)
@@ -108,16 +124,10 @@ function fakeAssets(): AssetStore {
 
 const assets = fakeAssets()
 
-/** The car's box, five per cent inside the sprite, as the game builds it. */
+/** The car's box: the bodywork the manifest declares, as the game builds it. */
 function playerBox(x: number, y: number, yaw: number): Obb {
   const sprite = manifest.sprites['player_sedan']
-  return createObb(
-    x,
-    y,
-    sprite.lengthMeters * (1 - COLLISION_MARGIN),
-    sprite.widthMeters * (1 - COLLISION_MARGIN),
-    yaw,
-  )
+  return createObb(x, y, sprite.lengthMeters, sprite.widthMeters, yaw)
 }
 
 const contact = createContact()
@@ -258,6 +268,71 @@ section('resposta a colisao')
   }
 }
 
+// ------------------------------------------------------- measuring a sprite
+
+section('medida dos sprites')
+{
+  /**
+   * A car as the art actually has it: padding all round, a soft halo on the
+   * silhouette, and two wing mirrors sticking out past the sides. Only the
+   * bodywork may end up as the metres, because only the bodywork is what the
+   * manifest means by "1.8 m wide".
+   */
+  const width = 200
+  const height = 120
+  const pixels = new Uint8ClampedArray(width * height * 4)
+  const setAlpha = (x: number, y: number, alpha: number): void => {
+    pixels[(y * width + x) * 4 + 3] = alpha
+  }
+
+  // Bodywork: solid, x 40..159, y 40..79.
+  for (let y = 40; y <= 79; y++) for (let x = 40; x <= 159; x++) setAlpha(x, y, 255)
+  // A one-pixel halo around it, faint but not padding.
+  for (let y = 39; y <= 80; y++) for (let x = 39; x <= 160; x++) {
+    if (pixels[(y * width + x) * 4 + 3] === 0) setAlpha(x, y, 60)
+  }
+  // Two mirrors: solid, eight pixels long, hanging six past each side.
+  for (let y = 34; y <= 39; y++) for (let x = 96; x <= 103; x++) setAlpha(x, y, 255)
+  for (let y = 80; y <= 85; y++) for (let x = 96; x <= 103; x++) setAlpha(x, y, 255)
+
+  const bounds = measureSpriteBounds(pixels, width, height)
+  check(
+    bounds.trim.x === 39 && bounds.trim.width === 122,
+    `o recorte pega o halo (x=${bounds.trim.x} l=${bounds.trim.width})`,
+  )
+  check(
+    bounds.trim.y === 34 && bounds.trim.height === 52,
+    `e os espelhos (y=${bounds.trim.y} a=${bounds.trim.height})`,
+  )
+  check(
+    bounds.body.x === 40 && bounds.body.width === 120,
+    `a lataria e so a chapa (x=${bounds.body.x} l=${bounds.body.width})`,
+  )
+  check(
+    bounds.body.y === 40 && bounds.body.height === 40,
+    `sem os espelhos na largura (y=${bounds.body.y} a=${bounds.body.height})`,
+  )
+
+  // And the quad that comes out of it puts the bodywork at exactly the metres
+  // asked for, centred, with the mirrors hanging off outside.
+  const quad = spriteQuad(bounds, 4.5, 1.8)
+  const bodyLeft = quad.x + (bounds.body.x - bounds.trim.x) * (quad.width / bounds.trim.width)
+  const bodyTop = quad.y + (bounds.body.y - bounds.trim.y) * (quad.height / bounds.trim.height)
+  check(Math.abs(bodyLeft + 2.25) < 1e-9, `a lataria comeca em -2,25 m (${bodyLeft.toFixed(4)})`)
+  check(Math.abs(bodyTop + 0.9) < 1e-9, `e em -0,90 m (${bodyTop.toFixed(4)})`)
+  check(quad.height > 1.8, `os espelhos passam da lataria (${quad.height.toFixed(3)} m)`)
+
+  // Art with no padding and nothing sticking out -- a ground tile -- must come
+  // back untouched, or every lot in the game shifts by a pixel.
+  const solid = new Uint8ClampedArray(8 * 8 * 4)
+  for (let i = 3; i < solid.length; i += 4) solid[i] = 255
+  const tile = measureSpriteBounds(solid, 8, 8)
+  check(
+    tile.trim.width === 8 && tile.trim.height === 8 && tile.body.width === 8 && tile.body.height === 8,
+    'uma textura cheia mede o arquivo inteiro',
+  )
+}
+
 // ------------------------------------------------------------------- levels
 
 const definitions: LevelDefinition[] = [
@@ -383,6 +458,185 @@ for (const definition of definitions) {
       definition.spawn.y < ground.y + ground.height,
     `${name}: o spawn esta sobre o asfalto`,
   )
+}
+
+// ----------------------------------------------------------- the difficulty
+
+/**
+ * The curve the five bays are calibrated to, in the terms a driver would use.
+ *
+ * A perpendicular bay is described by how much room there is beside the car; a
+ * parallel one by how much longer than the car the bay is, because that is the
+ * number a baliza lives or dies by. Written down here so a level file cannot
+ * quietly drift back towards a car park made of aircraft hangars: the reference
+ * is a real bay, 2.4 m wide for a 1.8 m car.
+ */
+const BAY_CURVE: Record<string, { readonly side?: number; readonly lengths?: number }> = {
+  '01-vaga-isolada': { side: 0.6 },
+  '02-entre-dois-carros': { side: 0.4 },
+  '03-baliza-tranquila': { lengths: 1.4 },
+  '04-van-e-pickup': { side: 0.25 },
+  '05-baliza-apertada': { lengths: 1.25 },
+}
+
+/**
+ * How much looser than the bay's own slack a centre tolerance may be [m].
+ *
+ * Some headroom is right -- a car parked a hand's width off centre is parked --
+ * but not so much that the tolerance stops following the bay. The teaching
+ * level sits at the loose end of this on purpose.
+ */
+const TOLERANCE_HEADROOM = 0.3
+
+section('a folga das vagas')
+for (const definition of definitions) {
+  const target = definition.target
+  const wanted = BAY_CURVE[definition.id]
+  const name = definition.id
+
+  if (wanted.side !== undefined) {
+    const side = (target.width - car.width) / 2
+    check(
+      Math.abs(side - wanted.side) < 0.03,
+      `${name}: ${(side * 100).toFixed(0)} cm de cada lado (queria ${(wanted.side * 100).toFixed(0)})`,
+    )
+  }
+  if (wanted.lengths !== undefined) {
+    const factor = target.length / car.length
+    check(
+      Math.abs(factor - wanted.lengths) < 0.04,
+      `${name}: vaga de ${factor.toFixed(2)} carro (queria ${wanted.lengths.toFixed(2)})`,
+    )
+  }
+
+  // And the validation follows the bay rather than sitting where it was: a
+  // tight bay with a loose tolerance is not harder, only more confusing. The
+  // centre tolerance has to be inside the bay's own slack plus a little, and
+  // never so tight that the middle of the bay is the only place that counts.
+  const slack = Math.min((target.width - car.width) / 2, (target.length - car.length) / 2)
+  check(
+    definition.params.centerTolerance <= slack + TOLERANCE_HEADROOM + 1e-9,
+    `${name}: a tolerancia de centro segue a vaga ` +
+      `(${definition.params.centerTolerance} m para ${slack.toFixed(2)} m de folga)`,
+  )
+  check(
+    definition.params.centerTolerance >= slack * 0.8,
+    `${name}: mas nao exige o milimetro (${definition.params.centerTolerance} m)`,
+  )
+}
+
+// ------------------------------------------------------ getting into the bay
+
+/**
+ * Every bay was tightened, so every bay has to be proved enterable again --
+ * with the collision box that is now the whole car rather than five per cent
+ * inside it. This is the search over the car's own kinematics; what it comes
+ * back with is a route and how many shuffles that route needed, which is the
+ * only honest reading of how hard a bay is.
+ */
+section('a vaga e alcancavel')
+{
+  const size = {
+    length: manifest.sprites['player_sedan'].lengthMeters,
+    width: manifest.sprites['player_sedan'].widthMeters,
+  }
+  for (const definition of definitions) {
+    const runtime = buildLevel(definition, assets)
+    const result = reachTargetBay(runtime, definition, car, size)
+    check(
+      result.reached,
+      `${definition.id}: existe manobra do spawn ate a vaga ` +
+        `(${result.expanded} poses, faltaram ${result.closest.toFixed(2)} m)`,
+    )
+    if (!result.reached) continue
+    console.log(
+      `  ${definition.id}: ${result.moves} arcos, ${result.reversals} inversao(oes) de marcha`,
+    )
+  }
+}
+
+// --------------------------------------------------- and drivable in all three
+
+/**
+ * The geometry says the bay can be reached; this says the car can be made to
+ * move at all, in each of the three gearboxes, forwards and in reverse, at the
+ * pace a car park is driven at. Together they are what "completable in every
+ * mode" means -- the modes differ in how torque is asked for, never in where
+ * the car can go.
+ */
+section('as tres transmissoes manobram')
+{
+  /** The crawl a car park is driven at [m/s]: about four kilometres an hour. */
+  const CREEP_SPEED = 1.2
+  /** Driving, then stopping: six seconds of one and two of the other. */
+  const DRIVE_TIME = 6
+  const TOTAL_TIME = 8
+
+  for (const mode of ['automatic', 'sequential', 'manual'] as const) {
+    for (const forward of [true, false]) {
+      const powertrain = createPowertrainState(mode, car.powertrain.idleRpm)
+      const telemetry = createTelemetry(powertrain)
+      const state = createVehicleState(0, 0, 0)
+      const input = createInputState()
+      const wanted = forward ? 1 : REVERSE_GEAR
+
+      let stalls = 0
+      let wasStalled = false
+      let fastest = 0
+
+      for (let step = 0; step < TOTAL_TIME / FIXED_DT; step++) {
+        const time = step * FIXED_DT
+        const speed = Math.abs(state.vx)
+        const stopping = time > DRIVE_TIME
+
+        // The clutch, on the floor until the gear is in and then eased up on
+        // the engine speed. That is what slipping a clutch is, and it is the
+        // only way a manual leaves a parking space: let it straight out and
+        // the engine dies, hold it down and nothing moves.
+        if (mode === 'manual') {
+          input.clutchPress =
+            powertrain.gear !== wanted ? 1 : clamp(0.78 - (powertrain.rpm - 1150) / 1200, 0.2, 0.85)
+        }
+
+        // Into gear the way each box is asked for it: a selector position for
+        // the automatic, one notch at a time for the sequential, the lever for
+        // the manual. Asked every step until the box has it, because each of
+        // them is entitled to refuse until its own conditions are met.
+        if (powertrain.gear !== wanted) {
+          const command: PowertrainCommand =
+            mode === 'automatic'
+              ? { kind: 'selectAuto', position: forward ? 'D' : 'R' }
+              : mode === 'sequential'
+                ? powertrain.gear < wanted
+                  ? { kind: 'shiftUp' }
+                  : { kind: 'shiftDown' }
+                : { kind: 'selectGear', gear: wanted }
+          applyPowertrainCommand(powertrain, car.powertrain, command, state.vx)
+        }
+
+        input.throttle = stopping ? 0 : clamp(0.22 + (CREEP_SPEED - speed) * 0.35, 0.1, 0.6)
+        input.brake = stopping ? 0.5 : 0
+
+        stepVehicle(state, car, powertrain, input, FIXED_DT, telemetry)
+        if (powertrain.stalled && !wasStalled) stalls++
+        wasStalled = powertrain.stalled
+        if (!stopping) fastest = Math.max(fastest, Math.abs(state.vx))
+      }
+
+      const travelled = forward ? state.x : -state.x
+      const way = forward ? 'para frente' : 'de re'
+      check(travelled > 3, `${mode} manobra ${way} (${travelled.toFixed(1)} m em ${DRIVE_TIME} s)`)
+      check(stalls === 0, `${mode} ${way} sem matar o motor (${stalls}x)`)
+      check(
+        fastest * 3.6 < 12,
+        `${mode} ${way} em passo de manobra (pico ${(fastest * 3.6).toFixed(1)} km/h)`,
+      )
+      check(
+        Math.abs(state.vx) < 0.05,
+        `${mode} ${way} para no freio (${(Math.abs(state.vx) * 3.6).toFixed(2)} km/h)`,
+      )
+    }
+  }
 }
 
 // --------------------------------------------------------------- the hold
@@ -622,6 +876,44 @@ section('bater num carro parado')
     'e por fora dela',
   )
   check(state.x < 20, 'sem atravessar a van')
+
+  // And the thing the whole hitbox is for: rolling up to a parked car at
+  // walking pace has to stop the bumper against it, not a hand's width short.
+  // The van is turned across the lane, so its near face is one half-width in
+  // front of its centre; the car's is one half-length ahead of its own.
+  //
+  // Twice: once at the pace somebody eases into a space, and once slower than
+  // the floor an impact is logged at, which is what "just touching" means.
+  for (const approach of [0.4, 0.1]) {
+    const gentle = createDamageLog()
+    const creep: ColliderMotion = { x: 16, y: 0, vx: approach, vy: 0, yaw: 0, yawRate: 0 }
+    for (let i = 0; i < 30 / FIXED_DT; i++) {
+      creep.x += creep.vx * FIXED_DT
+      creep.y += creep.vy * FIXED_DT
+      setObbPose(collider.box, creep.x, creep.y, creep.yaw)
+      resolveVehicleCollisions(world, collider, creep, gentle)
+      // Still on the throttle after the touch, as a driver leaning on a kerb
+      // would be: the contact has to hold, not become a shove.
+      creep.vx = Math.max(creep.vx, approach * 0.25)
+    }
+
+    const vanFace = 20 - van.widthMeters / 2
+    const nose = creep.x + manifest.sprites['player_sedan'].lengthMeters / 2
+    const gap = vanFace - nose
+    check(gap >= -0.01, `a ${approach} m/s nao entra na van (${(gap * 100).toFixed(1)} cm)`)
+    check(
+      gap < 0.03,
+      `a ${approach} m/s encosta a poucos centimetros (${(gap * 100).toFixed(1)} cm)`,
+    )
+    console.log(`  encostando a ${approach} m/s: para a ${(gap * 1000).toFixed(1)} mm da van`)
+    // Under the floor nothing is logged at all; above it, one touch and not
+    // one per frame of leaning on the thing.
+    if (approach < 0.15) {
+      check(gentle.total === 0, `a ${approach} m/s encostar nao custa lataria (${gentle.total.toFixed(3)})`)
+    } else {
+      check(gentle.count === 1, `a ${approach} m/s conta um toque so (${gentle.count}x)`)
+    }
+  }
 }
 
 // -------------------------------------------------------------- the phases
@@ -720,6 +1012,63 @@ section('nota e recordes')
     params,
   )
   check(quick.points === 100, 'ser mais rapido que o alvo nao rende pontos extras')
+
+  // The rule the criteria exist to keep, on every level that ships: inside the
+  // target time, no damage, no stall, and parked anywhere the bay accepts is
+  // three stars. Taken at the very edge of both tolerances, which is the case
+  // the old arithmetic marked down to two -- a park the game had just called
+  // good enough, costing the whole precision weight for being it.
+  for (const definition of definitions) {
+    const p = definition.params
+    const edge = scoreRun(
+      {
+        time: p.targetTime,
+        damage: 0,
+        stalls: 0,
+        distance: p.centerTolerance,
+        angleError: p.angleTolerance,
+      },
+      p,
+    )
+    check(edge.stars === 3, `${definition.id}: run limpo na borda da tolerancia da tres estrelas`)
+    check(
+      edge.criteria.every((criterion) => criterion.passed),
+      `${definition.id}: e com os quatro criterios cumpridos`,
+    )
+  }
+
+  // Every criterion says what it measured and what it was measured against,
+  // because a verdict with no numbers behind it cannot be argued with or
+  // improved on.
+  const missed = scoreRun(
+    {
+      time: params.targetTime * 1.5,
+      damage: 2,
+      stalls: 1,
+      distance: params.centerTolerance * 0.5,
+      angleError: params.angleTolerance * 0.5,
+    },
+    params,
+  )
+  check(missed.stars < 3, 'estourar o tempo com dano e motor morto nao da tres estrelas')
+  check(missed.criteria.length === 4, 'quatro criterios na tela')
+  check(
+    missed.criteria.filter((criterion) => criterion.passed).map((c) => c.id).join(',') === 'precisao',
+    'e so a precisao passou',
+  )
+  check(
+    missed.criteria.every((criterion) => criterion.detail.includes('/')),
+    'cada criterio mostra o valor obtido e o limiar',
+  )
+
+  // A stall counted that never happened would take the star with it, so the
+  // criterion has to read zero when the engine never died.
+  const alive = scoreRun(
+    { time: params.targetTime, damage: 0, stalls: 0, distance: 0, angleError: 0 },
+    params,
+  )
+  const stallCriterion = alive.criteria.find((criterion) => criterion.id === 'motor')
+  check(stallCriterion?.detail === '0 / 0', `sem morrer o motor conta zero (${stallCriterion?.detail})`)
 
   const base: LevelRecord = { stars: 2, points: 70, time: 40, damage: 1 }
   check(isBetter({ ...base, stars: 3, points: 60 }, base), 'mais estrelas e melhor')

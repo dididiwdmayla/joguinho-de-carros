@@ -11,7 +11,6 @@
  */
 import { formatTime, type ScreenModel, type ScreenStat } from '../ui/screens'
 import type { LevelDefinition } from '../level/levelSchema'
-import { radToDeg } from '../core/math'
 import type { FlowState } from './flow'
 
 /** The panel for the phase the game is in, or null while it is being played. */
@@ -90,19 +89,16 @@ function completedModel(flow: FlowState, levels: readonly LevelDefinition[]): Sc
   const result = flow.result
   const stats: ScreenStat[] = []
   if (result !== null && level !== undefined) {
-    stats.push({
-      label: 'TEMPO',
-      value: `${formatTime(result.summary.time)}  (alvo ${formatTime(level.params.targetTime)})`,
-    })
-    stats.push({ label: 'DANO', value: result.summary.damage.toFixed(1) })
-    stats.push({ label: 'MOTOR MORTO', value: String(result.summary.stalls) })
-    stats.push({
-      label: 'PRECISAO',
-      value: `${(result.summary.distance * 100).toFixed(0)} cm  ${radToDeg(result.summary.angleError).toFixed(0)} graus`,
-    })
+    // The four criteria, each with what it measured and what it was measured
+    // against. Meeting all four is the third star, so this row of ticks is the
+    // whole explanation of the stars above it -- which is the point: a grade
+    // nobody can take apart is a grade nobody can improve on.
+    for (const criterion of result.score.criteria) {
+      stats.push({ label: criterion.label, value: criterion.detail, passed: criterion.passed })
+    }
     stats.push({
       label: result.best ? 'PONTOS (RECORDE)' : 'PONTOS',
-      value: result.score.points.toFixed(0),
+      value: `${result.score.points.toFixed(0)} / ${level.params.score.threeStars}`,
       highlight: result.best,
     })
   }

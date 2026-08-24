@@ -32,6 +32,11 @@ export interface ScreenStat {
   readonly value: string
   /** Draws the value in the accent colour: a personal best, a lost run. */
   readonly highlight?: boolean
+  /**
+   * A row that was judged: drawn with a tick or a cross, and in the colour of
+   * the verdict. Left out on a row that is only a number.
+   */
+  readonly passed?: boolean
 }
 
 export interface ScreenLevelCard {

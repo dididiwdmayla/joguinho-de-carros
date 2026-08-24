@@ -14,17 +14,19 @@
  * weight below fades out at both ends of the range so the very dark and the
  * very bright parts of the art are never touched.
  */
-import type { LoadedSprite, SpriteTrim } from '../assets/loader'
+import type { LoadedSprite, SpriteQuad, SpriteTrim } from '../assets/loader'
 import type { SpriteBlend } from '../assets/manifest'
 
 /** Anything the world layers can blit: a loaded PNG, or a canvas we painted. */
 export interface DrawableSprite {
   readonly image: CanvasImageSource
-  /** Extent along the sprite's +X axis [m]. */
+  /** Extent of the bodywork along the sprite's +X axis [m]. */
   readonly lengthMeters: number
-  /** Extent along the sprite's +Y axis [m]. */
+  /** Extent of the bodywork along the sprite's +Y axis [m]. */
   readonly widthMeters: number
   readonly trim: SpriteTrim
+  /** Where `trim` lands, in metres about the centre of the bodywork. */
+  readonly quad: SpriteQuad
   readonly blend: SpriteBlend
 }
 
@@ -148,8 +150,11 @@ export function tintSprite(sprite: LoadedSprite, tint: Tint): DrawableSprite {
     lengthMeters: sprite.lengthMeters,
     widthMeters: sprite.widthMeters,
     // The copy is the artwork and nothing else, so its own trim is the whole
-    // canvas -- the padding was left behind in the blit above.
+    // canvas -- the padding was left behind in the blit above. Where that
+    // artwork lands is unchanged: the quad describes the trimmed rectangle,
+    // and the trimmed rectangle is precisely what was copied.
     trim: { x: 0, y: 0, width: trim.width, height: trim.height },
+    quad: sprite.quad,
     blend: sprite.blend,
   }
 }

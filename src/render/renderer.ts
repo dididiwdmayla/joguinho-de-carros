@@ -5,6 +5,7 @@
  * own function. Layers that have nothing to draw yet still exist, so the ones
  * that come later slot in without anything else moving.
  */
+import { drawCollisionBoxes } from '../debug/boxes'
 import { drawDecals } from './layers/decals'
 import { drawEffects } from './layers/effects'
 import { drawGround } from './layers/ground'
@@ -31,6 +32,11 @@ export function renderFrame(context: RenderContext): void {
   drawProps(context)
   drawVehicles(context)
   drawEffects(context)
+  // Over the art it is checking and under the panels, which is the only place
+  // an outline of a collision box is worth anything.
+  if (context.debug !== null && context.debug.boxes !== null) {
+    drawCollisionBoxes(context, context.debug.boxes)
+  }
   drawUi(context)
 }
 

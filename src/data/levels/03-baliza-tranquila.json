@@ -22,12 +22,12 @@
     ]
   },
   "spawn": { "x": 40, "y": 11.0, "angulo": 180 },
-  "vagaAlvo": { "x": 26.1, "y": 6.05, "angulo": 0, "comprimento": 7.0, "largura": 2.7, "tipo": "paralela" },
+  "vagaAlvo": { "x": 26.1, "y": 6.05, "angulo": 0, "comprimento": 6.3, "largura": 2.5, "tipo": "paralela" },
   "vagas": [
-    { "x": 19.9, "y": 6.05, "angulo": 0, "comprimento": 5.0, "largura": 2.7, "tipo": "paralela", "ocupante": "parked_sedan" },
-    { "x": 32.4, "y": 6.05, "angulo": 0, "comprimento": 5.2, "largura": 2.7, "tipo": "paralela", "ocupante": "parked_suv" },
-    { "x": 13.9, "y": 6.05, "angulo": 0, "comprimento": 5.0, "largura": 2.7, "tipo": "paralela", "ocupante": "parked_hatch" },
-    { "x": 8.0, "y": 6.05, "angulo": 0, "comprimento": 5.0, "largura": 2.7, "tipo": "paralela" }
+    { "x": 20.65, "y": 6.05, "angulo": 0, "comprimento": 4.6, "largura": 2.5, "tipo": "paralela", "ocupante": "parked_sedan" },
+    { "x": 31.6, "y": 6.05, "angulo": 0, "comprimento": 4.7, "largura": 2.5, "tipo": "paralela", "ocupante": "parked_suv" },
+    { "x": 16.1, "y": 6.05, "angulo": 0, "comprimento": 3.9, "largura": 2.5, "tipo": "paralela", "ocupante": "parked_hatch" },
+    { "x": 10.8, "y": 6.05, "angulo": 0, "comprimento": 5.0, "largura": 2.5, "tipo": "paralela" }
   ],
   "obstaculos": [
     { "tipo": "curb_block", "x": 47.0, "y": 6.2, "angulo": 20 },
@@ -43,8 +43,8 @@
     "tempoAlvo": 70,
     "tempoLimite": 300,
     "danoLimite": 12,
-    "toleranciaCentro": 0.7,
-    "toleranciaAngulo": 12,
+    "toleranciaCentro": 0.55,
+    "toleranciaAngulo": 10,
     "velocidadeParado": 0.2,
     "tempoValidacao": 1.0,
     "pontuacao": {

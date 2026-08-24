@@ -58,7 +58,7 @@ import {
   type Rect,
   type TouchLayout,
 } from '../ui/touchLayout'
-import { gateEngageable, type UiButton, type UiState } from '../ui/uiState'
+import { cycleDebugMode, gateEngageable, type UiButton, type UiState } from '../ui/uiState'
 import { saveVehicleSettings } from '../ui/vehicleSettings'
 import { nextFuelId } from '../vehicle/fuel'
 import {
@@ -341,7 +341,7 @@ export class InputManager {
       return
     }
     if (event.code === 'F3' || event.code === 'Backquote') {
-      if (!event.repeat) this.ui.debugVisible = !this.ui.debugVisible
+      if (!event.repeat) cycleDebugMode(this.ui)
       event.preventDefault()
       return
     }
@@ -528,7 +528,7 @@ export class InputManager {
         this.ui.latched.clear()
         break
       case 'debug':
-        this.ui.debugVisible = !this.ui.debugVisible
+        cycleDebugMode(this.ui)
         break
       case 'fullscreen':
         this.onFullscreenRequest()
