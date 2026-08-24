@@ -1,6 +1,13 @@
 /**
  * Where the on-screen controls live, and what each one is allowed to do.
  *
+ * A layout belongs to one gearbox, never to the game as a whole. The three
+ * transmissions do not have the same controls in front of them -- an H gate
+ * is not two paddles is not a P R N D selector, and the manual is the only
+ * one with a clutch to work -- so a size that suits one of them is the wrong
+ * size for the other two. Each mode keeps its own placements, and switching
+ * gearbox loads that mode's layout.
+ *
  * The built-in layout in touchLayout.ts is only a starting point. A phone has
  * fewer fingers than this car has controls -- holding the clutch, feeding the
  * throttle and steering at once is three thumbs' worth of work -- so every
@@ -13,6 +20,7 @@
  * survives a rotation, a resize, and a different phone.
  */
 import { clamp } from '../core/math'
+import { TRANSMISSION_MODES, type TransmissionMode } from '../vehicle/powertrain'
 
 /**
  * The driving controls, and only those. The row of system buttons along the
@@ -188,15 +196,29 @@ export interface ControlPlacement {
 /** A null placement means "wherever the built-in layout puts it". */
 export type ControlPlacements = Record<ControlSlot, ControlPlacement | null>
 
+/** One gearbox's worth of layout: where its controls sit, and under which preset. */
+export interface ModeLayout {
+  /** Only a label: the preset is materialised into placements when applied. */
+  preset: PresetId
+  placements: ControlPlacements
+}
+
 export interface ControlConfig {
   steeringStyle: SteeringStyle
   /** Turns from stop to stop, one of WHEEL_TURN_OPTIONS. */
   wheelTurns: number
-  /** Only a label: the preset is materialised into placements when applied. */
-  preset: PresetId
-  placements: ControlPlacements
+  /**
+   * One layout per gearbox. They are edited and stored apart, so resizing the
+   * gate in manual leaves the automatic's selector exactly where it was.
+   */
+  layouts: Record<TransmissionMode, ModeLayout>
   /** How see-through the touch layer is, one of CONTROL_OPACITY_OPTIONS. */
   controlsOpacity: number
+}
+
+/** The layout in force for a gearbox. The only way one is ever reached. */
+export function layoutFor(config: ControlConfig, mode: TransmissionMode): ModeLayout {
+  return config.layouts[mode]
 }
 
 export function emptyPlacements(): ControlPlacements {
@@ -212,12 +234,22 @@ export function emptyPlacements(): ControlPlacements {
   }
 }
 
+/** A gearbox's layout as the game ships it: the built-in one, untouched. */
+export function emptyModeLayout(): ModeLayout {
+  return { preset: 'padrao', placements: emptyPlacements() }
+}
+
+function emptyLayouts(): Record<TransmissionMode, ModeLayout> {
+  const layouts = {} as Record<TransmissionMode, ModeLayout>
+  for (const mode of TRANSMISSION_MODES) layouts[mode] = emptyModeLayout()
+  return layouts
+}
+
 export function defaultControlConfig(): ControlConfig {
   return {
     steeringStyle: 'bar',
     wheelTurns: DEFAULT_WHEEL_TURNS,
-    preset: 'padrao',
-    placements: emptyPlacements(),
+    layouts: emptyLayouts(),
     controlsOpacity: DEFAULT_CONTROLS_OPACITY,
   }
 }
@@ -232,7 +264,13 @@ export type SlotCenters = Readonly<Record<ControlSlot, { x: number; y: number }>
  * would have used anyway. Materialising rather than deriving it every frame
  * is what lets a preset be used as a starting point and then adjusted.
  */
-export function presetPlacements(preset: PresetId, centers: SlotCenters): ControlPlacements {
+export function presetPlacements(
+  preset: PresetId,
+  centers: SlotCenters,
+  /** What is on the screen right now: a preset moves controls, it never
+   *  brings back one the mode or the player had put away. */
+  hidden: Readonly<Record<ControlSlot, boolean>>,
+): ControlPlacements {
   if (preset === 'padrao') return emptyPlacements()
 
   const placements = emptyPlacements()
@@ -241,7 +279,13 @@ export function presetPlacements(preset: PresetId, centers: SlotCenters): Contro
     if (preset === 'canhoto') {
       // Mirrored down the middle: everything that was under the right thumb
       // is now under the left one, and the other way round.
-      placements[slot] = { x: 1 - centre.x, y: centre.y, scale: 1, hidden: false, latch: false }
+      placements[slot] = {
+        x: 1 - centre.x,
+        y: centre.y,
+        scale: 1,
+        hidden: hidden[slot],
+        latch: false,
+      }
       continue
     }
     // Compact: smaller, and pulled towards the edge each control already
@@ -251,7 +295,7 @@ export function presetPlacements(preset: PresetId, centers: SlotCenters): Contro
       x: clamp(centre.x + side * 0.06, 0.05, 0.95),
       y: clamp(centre.y + 0.03, 0.05, 0.95),
       scale: 0.78,
-      hidden: false,
+      hidden: hidden[slot],
       latch: false,
     }
   }
@@ -260,7 +304,33 @@ export function presetPlacements(preset: PresetId, centers: SlotCenters): Contro
 
 // ------------------------------------------------------------------ storage
 
-const STORAGE_KEY = 'joguinho.controls.v1'
+const STORAGE_KEY = 'joguinho.controls.v2'
+/**
+ * The single shared layout this game used to save, before a layout belonged
+ * to one gearbox. Read once, spread across all three modes, and never written
+ * again: a player who had arranged their controls keeps that arrangement in
+ * whichever mode they open next, and can then pull the other two apart.
+ */
+const LEGACY_STORAGE_KEY = 'joguinho.controls.v1'
+
+function readStored(key: string): Record<string, unknown> | null {
+  let raw: string | null = null
+  try {
+    raw = window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+  if (raw === null) return null
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw) as unknown
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  return parsed as Record<string, unknown>
+}
 
 /**
  * Reads back a saved layout. Every field is checked: a layout written by an
@@ -270,22 +340,8 @@ const STORAGE_KEY = 'joguinho.controls.v1'
  */
 export function loadControlConfig(): ControlConfig {
   const config = defaultControlConfig()
-  let raw: string | null = null
-  try {
-    raw = window.localStorage.getItem(STORAGE_KEY)
-  } catch {
-    return config
-  }
-  if (raw === null) return config
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw) as unknown
-  } catch {
-    return config
-  }
-  if (typeof parsed !== 'object' || parsed === null) return config
-  const source = parsed as Record<string, unknown>
+  const source = readStored(STORAGE_KEY) ?? readStored(LEGACY_STORAGE_KEY)
+  if (source === null) return config
 
   if (source['steeringStyle'] === 'wheel' || source['steeringStyle'] === 'bar') {
     config.steeringStyle = source['steeringStyle']
@@ -296,24 +352,55 @@ export function loadControlConfig(): ControlConfig {
     // or a hand-edited file, still has to land on one this one offers.
     config.wheelTurns = nearestWheelTurns(wheelTurns)
   }
-  const preset = source['preset']
-  if (typeof preset === 'string' && (PRESET_IDS as readonly string[]).includes(preset)) {
-    config.preset = preset as PresetId
-  }
   const controlsOpacity = source['controlsOpacity']
   if (typeof controlsOpacity === 'number' && Number.isFinite(controlsOpacity)) {
     // Snapped rather than trusted, same reasoning as wheelTurns above.
     config.controlsOpacity = nearestControlsOpacity(controlsOpacity)
   }
 
+  const layouts = source['layouts']
+  if (typeof layouts === 'object' && layouts !== null) {
+    const record = layouts as Record<string, unknown>
+    for (const mode of TRANSMISSION_MODES) config.layouts[mode] = readModeLayout(record[mode])
+    return config
+  }
+
+  // No per-mode layouts in the file: it was written before they existed, so
+  // whatever single layout it holds becomes the starting point of all three.
+  const shared = readModeLayout(source)
+  for (const mode of TRANSMISSION_MODES) config.layouts[mode] = cloneModeLayout(shared)
+  return config
+}
+
+function readModeLayout(value: unknown): ModeLayout {
+  const layout = emptyModeLayout()
+  if (typeof value !== 'object' || value === null) return layout
+  const source = value as Record<string, unknown>
+
+  const preset = source['preset']
+  if (typeof preset === 'string' && (PRESET_IDS as readonly string[]).includes(preset)) {
+    layout.preset = preset as PresetId
+  }
+
   const placements = source['placements']
   if (typeof placements === 'object' && placements !== null) {
     const record = placements as Record<string, unknown>
     for (const slot of CONTROL_SLOTS) {
-      config.placements[slot] = readPlacement(record[slot], slot)
+      layout.placements[slot] = readPlacement(record[slot], slot)
     }
   }
-  return config
+  return layout
+}
+
+/** A layout of its own, so two modes seeded from one file never share objects. */
+function cloneModeLayout(layout: ModeLayout): ModeLayout {
+  const copy = emptyModeLayout()
+  copy.preset = layout.preset
+  for (const slot of CONTROL_SLOTS) {
+    const placement = layout.placements[slot]
+    copy.placements[slot] = placement === null ? null : { ...placement }
+  }
+  return copy
 }
 
 function readPlacement(value: unknown, slot: ControlSlot): ControlPlacement | null {

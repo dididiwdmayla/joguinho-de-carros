@@ -19,7 +19,11 @@ import { renderFrame } from '../render/renderer'
 import type { RenderContext } from '../render/scene'
 import { syncViewport } from '../render/viewport'
 import { stepVehicle } from '../vehicle/physics'
-import { applyPowertrainCommand, transmissionModeLabel } from '../vehicle/powertrain'
+import {
+  applyPowertrainCommand,
+  parkAvailable,
+  transmissionModeLabel,
+} from '../vehicle/powertrain'
 import { copyVehicleState } from '../vehicle/vehicleState'
 import { syncShifterToGear, updateControlOpacity } from '../ui/uiState'
 import { saveVehicleSettings } from '../ui/vehicleSettings'
@@ -83,6 +87,12 @@ function advanceFrame(state: GameState, timestamp: number): void {
   // The gearbox tells the controls what it is, so the input layer can lay out
   // the right shifter and refuse a gear the clutch will not allow -- without
   // reaching into the simulation itself.
+  if (state.ui.mode !== state.powertrain.mode) {
+    // Another gearbox means another layout: the controls under those latches
+    // are about to be somewhere else, or not on the screen at all.
+    state.ui.latched.clear()
+    state.ui.editing = null
+  }
   state.ui.mode = state.powertrain.mode
   state.ui.gear = state.powertrain.gear
   state.ui.clutchPedal = state.powertrain.clutch
@@ -187,6 +197,10 @@ function buildRenderContext(
   readout.modeLabel = transmissionModeLabel(state.powertrain.mode)
   readout.clutch = state.powertrain.clutch
   readout.gear = state.powertrain.gear
+  readout.park = state.powertrain.park
+  // Read from the car itself rather than from a press: the selector greys P
+  // out while the pawl would not drop, before anybody has tried it.
+  readout.parkReady = parkAvailable(current.vx)
   readout.stalled = state.powertrain.stalled
 
   const debug: DebugFrame | null = state.ui.debugVisible

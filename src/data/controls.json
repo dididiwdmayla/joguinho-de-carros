@@ -1,0 +1,7 @@
+{
+  "pedals": {
+    "throttleExponent": 1.9,
+    "brakeExponent": 2.4,
+    "touchFloor": 0.04
+  }
+}

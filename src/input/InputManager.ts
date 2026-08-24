@@ -22,8 +22,9 @@ import type { Viewport } from '../render/viewport'
 import {
   CONTROL_SLOTS,
   DEFAULT_WHEEL_TURNS,
-  emptyPlacements,
+  emptyModeLayout,
   LATCHABLE_SLOTS,
+  layoutFor,
   MAX_CONTROL_SCALE,
   MIN_CONTROL_SCALE,
   nextControlsOpacity,
@@ -34,6 +35,7 @@ import {
   wheelMaxAngle,
   type ControlPlacement,
   type ControlSlot,
+  type ModeLayout,
   type OpacitySlot,
 } from '../ui/controlLayout'
 import {
@@ -58,11 +60,13 @@ import {
 import { gateEngageable, type UiButton, type UiState } from '../ui/uiState'
 import { saveVehicleSettings } from '../ui/vehicleSettings'
 import { nextFuelId } from '../vehicle/fuel'
-import { nextTransmissionMode, type PowertrainCommand } from '../vehicle/powertrain'
+import {
+  nextTransmissionMode,
+  TRANSMISSION_MODES,
+  type PowertrainCommand,
+} from '../vehicle/powertrain'
 import { createInputState, type InputState } from './input'
-
-/** Pedal reading at the shallow edge, so a light press still does something. */
-const PEDAL_FLOOR = 0.1
+import { pedalResponse, type PedalCurve } from './pedalCurve'
 
 /** Below this a latch would be holding nothing, so it is not taken. */
 const LATCH_DEADZONE = 0.01
@@ -87,8 +91,10 @@ const MOMENTARY: ReadonlySet<ControlId> = new Set<ControlId>([
   'fullscreen',
   'debug',
   'mute',
+  'park',
   'reverse',
   'neutral',
+  'drive',
   'ignition',
   'mode',
   'sequentialUp',
@@ -135,6 +141,8 @@ export interface InputManagerOptions {
    * the handler. Opening and resuming an audio device is only allowed there.
    */
   onUserGesture: () => void
+  /** How the pedals turn a finger's position into an application. */
+  pedals: PedalCurve
 }
 
 export class InputManager {
@@ -143,6 +151,7 @@ export class InputManager {
   private readonly ui: UiState
   private readonly onFullscreenRequest: () => void
   private readonly onUserGesture: () => void
+  private readonly pedals: PedalCurve
   private readonly state: InputState = createInputState()
   private readonly keys = new Set<string>()
   private readonly pointers = new Map<number, ActivePointer>()
@@ -155,6 +164,7 @@ export class InputManager {
     this.ui = options.ui
     this.onFullscreenRequest = options.onFullscreenRequest
     this.onUserGesture = options.onUserGesture
+    this.pedals = options.pedals
   }
 
   attach(): void {
@@ -281,7 +291,12 @@ export class InputManager {
   }
 
   private layout(): TouchLayout {
-    return computeTouchLayout(this.viewport, this.ui.controls, this.ui.gatePattern)
+    return computeTouchLayout(this.viewport, this.ui.controls, this.ui.gatePattern, this.ui.mode)
+  }
+
+  /** The layout of the gearbox currently fitted: the only one being edited. */
+  private modeLayout(): ModeLayout {
+    return layoutFor(this.ui.controls, this.ui.mode)
   }
 
   /**
@@ -492,11 +507,19 @@ export class InputManager {
       case 'sequentialDown':
         this.commands.push({ kind: 'shiftDown' })
         break
+      // The automatic's selector. Each position is asked for by name rather
+      // than by gear: P is not a gear, and N has to be a way back to D.
+      case 'park':
+        this.commands.push({ kind: 'selectAuto', position: 'P' })
+        break
       case 'reverse':
-        this.commands.push({ kind: 'selectGear', gear: -1 })
+        this.commands.push({ kind: 'selectAuto', position: 'R' })
         break
       case 'neutral':
-        this.commands.push({ kind: 'selectGear', gear: 0 })
+        this.commands.push({ kind: 'selectAuto', position: 'N' })
+        break
+      case 'drive':
+        this.commands.push({ kind: 'selectAuto', position: 'D' })
         break
       case 'ignition':
         this.commands.push({ kind: 'start' })
@@ -542,8 +565,10 @@ export class InputManager {
           if (containsPoint(layout.sequentialDown, x, y)) return 'sequentialDown'
           break
         case 'automatic':
+          if (containsPoint(layout.park, x, y)) return 'park'
           if (containsPoint(layout.reverse, x, y)) return 'reverse'
           if (containsPoint(layout.neutral, x, y)) return 'neutral'
+          if (containsPoint(layout.drive, x, y)) return 'drive'
           break
       }
     }
@@ -583,10 +608,10 @@ export class InputManager {
         )
         break
       case 'throttle':
-        pointer.throttle = pedalAmount(layout.throttle, y, 'up')
+        pointer.throttle = this.pedalAmount(layout.throttle, y, 'up', this.pedals.throttleExponent)
         break
       case 'brake':
-        pointer.brake = pedalAmount(layout.brake, y, 'down')
+        pointer.brake = this.pedalAmount(layout.brake, y, 'down', this.pedals.brakeExponent)
         break
       case 'clutch':
         // Same travel as the other two pedals: top is floored, base is out,
@@ -602,6 +627,26 @@ export class InputManager {
       default:
         break
     }
+  }
+
+  /**
+   * How hard a pedal is being pressed: shallow at the edge nearest the palm,
+   * full at the far edge, and held for as long as the finger stays down.
+   *
+   * The travel is not the application. It goes through the pedal's own curve
+   * first, so the shallow end of the pedal has fine control over a little
+   * force and the deep end has coarse control over a lot of it -- which is
+   * what makes both easing up to a parked car and locking the wheels possible
+   * on a pedal one thumb long.
+   */
+  private pedalAmount(
+    rect: Rect,
+    y: number,
+    direction: 'up' | 'down',
+    exponent: number,
+  ): number {
+    const travel = direction === 'up' ? rect.y + rect.height - y : y - rect.y
+    return pedalResponse(travel / rect.height, exponent, this.pedals.touchFloor)
   }
 
   // ------------------------------------------------------------------- gate
@@ -687,6 +732,9 @@ export class InputManager {
         break
       case 'reset':
         this.resetLayout()
+        break
+      case 'resetAll':
+        this.resetAllLayouts()
         break
       case 'close':
         this.closeMenu()
@@ -786,6 +834,9 @@ export class InputManager {
       case 'reset':
         this.resetLayout()
         break
+      case 'resetAll':
+        this.resetAllLayouts()
+        break
       case 'preset':
         this.cyclePreset()
         break
@@ -824,26 +875,36 @@ export class InputManager {
    * the built-in one is what stops the first drag from jumping.
    */
   private placementOf(slot: ControlSlot): ControlPlacement {
-    const existing = this.ui.controls.placements[slot]
+    const layout = this.modeLayout()
+    const existing = layout.placements[slot]
     if (existing !== null) return existing
-    const rect = this.layout().slots[slot]
+    const live = this.layout()
+    const rect = live.slots[slot]
     const created: ControlPlacement = {
       x: rectCenterX(rect) / this.viewport.cssWidth,
       y: rectCenterY(rect) / this.viewport.cssHeight,
       scale: 1,
-      hidden: false,
+      // Seeded from what the mode was already showing, so writing a placement
+      // down for the first time never quietly un-hides a control.
+      hidden: live.hidden[slot],
       latch: false,
     }
-    this.ui.controls.placements[slot] = created
+    layout.placements[slot] = created
     return created
   }
 
   private cyclePreset(): void {
-    const current = PRESET_IDS.indexOf(this.ui.controls.preset)
+    const layout = this.modeLayout()
+    const current = PRESET_IDS.indexOf(layout.preset)
     const next = PRESET_IDS[(current + 1) % PRESET_IDS.length]
-    // Measured against the layout the game would have used anyway, so a
-    // preset lands the same way on any screen it is picked on.
-    const base = defaultSlotRects(this.viewport, this.ui.controls, this.ui.gatePattern)
+    // Measured against the layout the game would have used anyway for this
+    // gearbox, so a preset lands the same way on any screen it is picked on.
+    const base = defaultSlotRects(
+      this.viewport,
+      this.ui.controls,
+      this.ui.gatePattern,
+      this.ui.mode,
+    )
     const centers = {} as Record<ControlSlot, { x: number; y: number }>
     for (const slot of CONTROL_SLOTS) {
       centers[slot] = {
@@ -851,18 +912,34 @@ export class InputManager {
         y: rectCenterY(base[slot]) / this.viewport.cssHeight,
       }
     }
-    this.ui.controls.preset = next
-    this.ui.controls.placements = presetPlacements(next, centers)
+    layout.preset = next
+    layout.placements = presetPlacements(next, centers, this.layout().hidden)
     this.ui.latched.clear()
   }
 
+  /**
+   * Back to the built-in layout for the gearbox being driven, and that one
+   * alone. The other two are somebody's work as much as this one was.
+   */
   private resetLayout(): void {
-    this.ui.controls.preset = 'padrao'
+    this.ui.controls.layouts[this.ui.mode] = emptyModeLayout()
+    this.resetSharedControls()
+  }
+
+  /** Back to the built-in layout for all three gearboxes at once. */
+  private resetAllLayouts(): void {
+    for (const mode of TRANSMISSION_MODES) {
+      this.ui.controls.layouts[mode] = emptyModeLayout()
+    }
+    this.resetSharedControls()
+  }
+
+  /** What both resets have in common: the settings no single mode owns. */
+  private resetSharedControls(): void {
     this.ui.controls.steeringStyle = 'bar'
     // Controls only: it sits under CONTROLE, and must not quietly hand the
     // player back a fuel or a gearbox they did not ask to be rid of.
     this.ui.controls.wheelTurns = DEFAULT_WHEEL_TURNS
-    this.ui.controls.placements = emptyPlacements()
     this.ui.latched.clear()
     this.ui.editing = null
   }
@@ -908,8 +985,10 @@ function opacitySlotOf(control: ControlId): OpacitySlot | null {
     case 'shifter':
     case 'sequentialUp':
     case 'sequentialDown':
+    case 'park':
     case 'reverse':
     case 'neutral':
+    case 'drive':
       return 'gearbox'
     default:
       return null
@@ -919,16 +998,6 @@ function opacitySlotOf(control: ControlId): OpacitySlot | null {
 /** Angle of a point about the centre of the wheel [rad]. */
 function wheelAngleAt(wheel: Rect, x: number, y: number): number {
   return Math.atan2(y - rectCenterY(wheel), x - rectCenterX(wheel))
-}
-
-/**
- * How hard a pedal is being pressed: shallow at the edge nearest the palm,
- * full at the far edge, and held for as long as the finger stays down.
- */
-function pedalAmount(rect: Rect, y: number, direction: 'up' | 'down'): number {
-  const travel = direction === 'up' ? rect.y + rect.height - y : y - rect.y
-  const ratio = clamp(travel / rect.height, 0, 1)
-  return PEDAL_FLOOR + (1 - PEDAL_FLOOR) * ratio
 }
 
 const EMPTY_COMMANDS: readonly PowertrainCommand[] = []
@@ -952,6 +1021,9 @@ const COMMAND_KEYS: Readonly<Record<string, PowertrainCommand>> = {
   KeyQ: { kind: 'shiftDown' },
   KeyR: { kind: 'start' },
   KeyT: { kind: 'cycleMode' },
+  // The automatic's selector has a key each; the other two boxes ignore them
+  // and take neutral and reverse from the gear keys below.
+  KeyP: { kind: 'selectAuto', position: 'P' },
   KeyN: { kind: 'selectGear', gear: 0 },
   KeyX: { kind: 'selectGear', gear: -1 },
   Digit0: { kind: 'selectGear', gear: 0 },

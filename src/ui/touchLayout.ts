@@ -12,14 +12,23 @@
  * That is only where the controls start, though -- the player's own layout is
  * applied on top of it here, so nothing downstream has to know whether a
  * control is where the game put it or where its owner did.
+ *
+ * Both halves of that belong to one gearbox at a time. The built-in seat is
+ * laid out around the box that is fitted -- an H gate, two paddles or a P R N
+ * D selector are three different controls, and the manual is the only one with
+ * a clutch to work -- and the player's layout is the one they arranged for
+ * that same gearbox. Everything here therefore takes the mode.
  */
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
+import type { TransmissionMode } from '../vehicle/powertrain'
 import {
   CONTROL_SLOTS,
+  layoutFor,
   MAX_CONTROL_SCALE,
   MIN_CONTROL_SCALE,
   type ControlConfig,
+  type ControlPlacement,
   type ControlSlot,
 } from './controlLayout'
 import { GATE_UNITS, plateAspect, plateWidthUnits, type ShifterPattern } from './shifterPattern'
@@ -70,10 +79,12 @@ export interface TouchLayout {
   /** Sequential selector, in the same place as the gate. */
   sequentialUp: Rect
   sequentialDown: Rect
-  /** Automatic selector: an indicator with reverse and neutral beside it. */
+  /** Automatic selector: what the box is doing, and the P R N D row under it. */
   gearDisplay: Rect
+  park: Rect
   reverse: Rect
   neutral: Rect
+  drive: Rect
   /** Transmission mode selector and starter. */
   mode: Rect
   ignition: Rect
@@ -117,8 +128,9 @@ export function defaultSlotRects(
   viewport: Viewport,
   config: ControlConfig,
   pattern: ShifterPattern,
+  transmission: TransmissionMode,
 ): SlotRects {
-  return defaultLayout(viewport, config, pattern).slots
+  return defaultLayout(viewport, config, pattern, transmission).slots
 }
 
 /** The built-in slots plus the fixed volume bar that sits beside the buttons. */
@@ -126,6 +138,8 @@ function defaultLayout(
   viewport: Viewport,
   config: ControlConfig,
   pattern: ShifterPattern,
+  /** Which gearbox is fitted: it decides the shape of the gearbox slot. */
+  transmission: TransmissionMode,
 ): { slots: SlotRects; volume: Rect } {
   const { cssWidth: width, cssHeight: height, safeArea } = viewport
   const unit = baseUnit(viewport)
@@ -187,64 +201,63 @@ function defaultLayout(
   }
 
   // --- gearbox, in the middle where a gear lever lives --------------------
-  // The gate is the most involved control on the screen, so it gets the most
-  // room: the plate is fitted as large as the seat allows, at the proportions
-  // the pattern itself works out to. Two places are tried -- between the
-  // steering and the pedals, and above the steering, where a phone held
-  // upright has more room -- and whichever yields the wider plate wins. This
-  // is also the box the other two transmissions draw into, at whatever size
-  // the pattern happened to earn -- a shifted gear pulls them along with it.
+  // Each transmission asks for a box of its own shape and its own size: the
+  // H gate is wide and needs room for a lever to be dragged around in, the
+  // sequential is two paddles stacked in a narrow column, and the automatic's
+  // selector is a low, wide strip of four positions. Sizing the three the
+  // same way is what used to leave two of them either cramped or oversized.
+  //
+  // Two seats are tried for whichever box it is -- between the steering and
+  // the pedals, and above the steering, where a phone held upright has more
+  // room -- and whichever yields the wider box wins.
   const smallHeight = Math.max(40, unit * 0.72)
-  // Kept clear above the plate for the mode and starter row, on the screens
+  // Wide enough for the word PARTIDA without the type having to shrink.
+  const smallWidth = unit * 1.4
+  // Kept clear above the box for the mode and starter row, on the screens
   // too narrow to stand it beside the gearbox instead.
   const gateCeiling = top + smallHeight + gap * 1.6
-  const aspect = plateAspect(pattern)
-  const maxPlateWidth = unit * MAX_PLATE_WIDTH_UNITS
+  const box = gearboxBox(transmission, pattern, unit)
   const between = fitPlate(
     steering.x + steering.width + gap,
     throttle.x - gap,
     gateCeiling,
     bottom,
-    aspect,
-    maxPlateWidth,
+    box.aspect,
+    box.maxWidth,
   )
   const above = fitPlate(
-    clutch.x + clutch.width + gap,
+    // Clear of the left column, which is the clutch and -- on a screen with
+    // no room beside the gearbox -- the mode and starter pair above it.
+    left + Math.max(clutch.width, smallWidth) + gap,
     throttle.x - gap,
     gateCeiling,
     steering.y - gap,
-    aspect,
-    maxPlateWidth,
+    box.aspect,
+    box.maxWidth,
   )
   const gearbox: Rect = between.width >= above.width ? between : above
 
-  // Mode selector and starter. Wide enough for the word PARTIDA without the
-  // type having to shrink to fit, and stacked beside the gearbox whenever
-  // there is room: the row above the gate is where the car itself sits, and
-  // buttons drawn across the bodywork are buttons nobody can read. Only a
-  // screen too narrow for that gap falls back to the row.
-  const smallWidth = unit * 1.4
+  // Mode selector and starter, one above the other. They stand beside the
+  // gearbox whenever there is room for them there, which is where a hand
+  // already is; only a screen too narrow for that falls back.
   const besideGate = gearbox.x + gearbox.width + gap
   const stacked = throttle.x - gap - besideGate >= smallWidth
-  const mode: Rect = stacked
-    ? { x: besideGate, y: gearbox.y, width: smallWidth, height: smallHeight }
-    : (() => {
-        const pairWidth = smallWidth * 2 + gap * 0.6
-        return {
-          x: clamp(rectCenterX(gearbox) - pairWidth / 2, left, Math.max(left, right - pairWidth)),
-          y: Math.max(top, gearbox.y - gap - smallHeight),
-          width: smallWidth,
-          height: smallHeight,
-        }
-      })()
-  const ignition: Rect = stacked
-    ? {
-        x: mode.x,
-        y: mode.y + smallHeight + gap * 0.6,
-        width: smallWidth,
-        height: smallHeight,
-      }
-    : { x: mode.x + smallWidth + gap * 0.6, y: mode.y, width: smallWidth, height: smallHeight }
+  const pairHeight = smallHeight * 2 + gap * 0.6
+  const pairX = stacked ? besideGate : left
+  const pairY = stacked
+    ? gearbox.y
+    : // Nowhere beside the gearbox: the pair goes up the left edge instead,
+      // over the clutch, which is the one column of the screen no gearbox
+      // ever reaches. Above the gearbox is where the car itself sits, and
+      // buttons drawn across the bodywork are buttons nobody can read.
+      Math.max(top, clutch.y - gap - pairHeight)
+  const mode: Rect = { x: pairX, y: pairY, width: smallWidth, height: smallHeight }
+  const ignition: Rect = {
+    x: pairX,
+    y: pairY + smallHeight + gap * 0.6,
+    width: smallWidth,
+    height: smallHeight,
+  }
 
   // --- volume, left of the top-right buttons ------------------------------
   const buttonSize = topButtonSize(unit)
@@ -261,6 +274,51 @@ function defaultLayout(
     slots: { steering, throttle, brake, clutch, handbrake, gearbox, mode, ignition },
     volume,
   }
+}
+
+/** How much of the automatic's box the position readout takes. */
+const AUTO_DISPLAY_FRACTION = 0.4
+
+/**
+ * The shape and the size ceiling of the gearbox box, per transmission.
+ *
+ * `aspect` is width over height and `maxWidth` is how large the box is ever
+ * allowed to get on a roomy screen -- past that it is only taking up the road.
+ * The numbers are in layout units, so all three scale with the screen the
+ * same way every other control does.
+ */
+function gearboxBox(
+  mode: TransmissionMode,
+  pattern: ShifterPattern,
+  unit: number,
+): { aspect: number; maxWidth: number } {
+  switch (mode) {
+    case 'manual':
+      // The plate's own proportions, straight from the pattern.
+      return { aspect: plateAspect(pattern), maxWidth: unit * MAX_PLATE_WIDTH_UNITS }
+    case 'sequential':
+      // Two paddles stacked: a narrow column under one thumb, no wider than
+      // it has to be to read "+ / -".
+      return { aspect: SEQUENTIAL_UNITS.width / SEQUENTIAL_UNITS.height, maxWidth: unit * SEQUENTIAL_UNITS.width }
+    case 'automatic':
+      // A readout with four positions in a row under it: wide and low, and
+      // wide enough that each of the four is still a finger target.
+      return { aspect: AUTO_UNITS.width / AUTO_UNITS.height, maxWidth: unit * AUTO_UNITS.width }
+  }
+}
+
+/** Sequential box, in layout units. */
+const SEQUENTIAL_UNITS = { width: 1.5, height: 2.5 } as const
+/** Automatic box, in layout units. Four cells of a finger each, plus the readout. */
+const AUTO_UNITS = { width: 4, height: 1.9 } as const
+
+/**
+ * Whether a control starts out hidden in this mode. Only the clutch does: the
+ * automatic and the sequential work their own, so the pedal there answers to
+ * nothing. The editor can still find it and switch it back on.
+ */
+function defaultHidden(mode: TransmissionMode, slot: ControlSlot): boolean {
+  return slot === 'clutch' && mode !== 'manual'
 }
 
 function baseUnit(viewport: Viewport): number {
@@ -291,8 +349,11 @@ function topButton(viewport: Viewport, index: number): Rect {
  * they have moved it. Kept on screen whatever the saved numbers say, so a
  * layout carried over from another screen can never strand a control.
  */
-function placeSlot(base: Rect, config: ControlConfig, slot: ControlSlot, viewport: Viewport): Rect {
-  const placement = config.placements[slot]
+function placeSlot(
+  base: Rect,
+  placement: ControlPlacement | null,
+  viewport: Viewport,
+): Rect {
   if (placement === null) return base
   const scale = clamp(placement.scale, MIN_CONTROL_SCALE, MAX_CONTROL_SCALE)
   const width = base.width * scale
@@ -311,18 +372,23 @@ export function computeTouchLayout(
   viewport: Viewport,
   config: ControlConfig,
   pattern: ShifterPattern,
+  mode: TransmissionMode,
 ): TouchLayout {
   const unit = baseUnit(viewport)
   const gap = Math.round(unit * 0.16)
-  const base = defaultLayout(viewport, config, pattern)
+  const base = defaultLayout(viewport, config, pattern, mode)
+  const placements = layoutFor(config, mode).placements
 
   const slots = {} as SlotRects
   const hidden = {} as Record<ControlSlot, boolean>
   const latch = {} as Record<ControlSlot, boolean>
   for (const slot of CONTROL_SLOTS) {
-    slots[slot] = placeSlot(base.slots[slot], config, slot, viewport)
-    const placement = config.placements[slot]
-    hidden[slot] = placement !== null && placement.hidden
+    const placement = placements[slot]
+    slots[slot] = placeSlot(base.slots[slot], placement, viewport)
+    // A control the player has never touched is shown or hidden by the mode
+    // itself: a clutch pedal in front of a gearbox that works its own is not
+    // a control, it is something in the way.
+    hidden[slot] = placement === null ? defaultHidden(mode, slot) : placement.hidden
     latch[slot] = placement !== null && placement.latch
   }
 
@@ -333,13 +399,21 @@ export function computeTouchLayout(
   // built-in ones: a gate the player has dragged or resized takes its
   // channels, its paddles and its selectors with it.
   const paddleHeight = (gearbox.height - gap * 0.6) / 2
-  // The automatic stacks inside the box rather than sitting side by side: the
-  // gear it picked across the top, the two selectors it still answers to
-  // underneath. Side by side in a tall box gives two slivers.
-  const displayHeight = gearbox.height * 0.5
-  const selectorTop = gearbox.y + displayHeight + gap * 0.6
-  const selectorHeight = Math.max(1, gearbox.height - displayHeight - gap * 0.6)
-  const cellWidth = (gearbox.width - gap * 0.6) / 2
+  // The automatic stacks inside the box: what the box is doing across the
+  // top, the four positions of the selector in a row underneath, in the order
+  // a real gate has them. Every one of them is a button of its own, so there
+  // is a way back to D from anywhere.
+  const displayHeight = gearbox.height * AUTO_DISPLAY_FRACTION
+  const selectorTop = gearbox.y + displayHeight + gap * 0.4
+  const selectorHeight = Math.max(1, gearbox.height - displayHeight - gap * 0.4)
+  const cellGap = gap * 0.4
+  const cellWidth = Math.max(1, (gearbox.width - cellGap * 3) / 4)
+  const selectorCell = (index: number): Rect => ({
+    x: gearbox.x + index * (cellWidth + cellGap),
+    y: selectorTop,
+    width: cellWidth,
+    height: selectorHeight,
+  })
 
   return {
     unit,
@@ -363,13 +437,10 @@ export function computeTouchLayout(
       height: paddleHeight,
     },
     gearDisplay: { x: gearbox.x, y: gearbox.y, width: gearbox.width, height: displayHeight },
-    reverse: { x: gearbox.x, y: selectorTop, width: cellWidth, height: selectorHeight },
-    neutral: {
-      x: gearbox.x + cellWidth + gap * 0.6,
-      y: selectorTop,
-      width: cellWidth,
-      height: selectorHeight,
-    },
+    park: selectorCell(0),
+    reverse: selectorCell(1),
+    neutral: selectorCell(2),
+    drive: selectorCell(3),
     mode: slots.mode,
     ignition: slots.ignition,
     volume: base.volume,
@@ -408,7 +479,7 @@ export function steeringWheelDiameter(layout: TouchLayout): number {
 export const STEERING_WHEEL_KEY = 'steering_wheel'
 
 /** Plate width ceiling, in layout units, so a big screen stays sensible. */
-const MAX_PLATE_WIDTH_UNITS = 5
+const MAX_PLATE_WIDTH_UNITS = 4.6
 
 /**
  * The largest plate of `aspect` that fits the horizontal span `from`..`to`

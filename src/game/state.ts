@@ -153,6 +153,8 @@ export function createGameState(options: GameStateOptions): GameState {
       modeLabel: transmissionModeLabel(powertrain.mode),
       clutch: powertrain.clutch,
       gear: powertrain.gear,
+      park: powertrain.park,
+      parkReady: true,
       stalled: powertrain.stalled,
     },
     accumulator: 0,

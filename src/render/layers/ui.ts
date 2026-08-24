@@ -28,11 +28,12 @@ import {
 } from '../../ui/touchLayout'
 import { gateEngageable } from '../../ui/uiState'
 import {
+  autoSelectorAt,
+  AUTO_SELECTORS,
   CLUTCH_BITE_END,
   CLUTCH_BITE_START,
   gearLabel,
-  NEUTRAL_GEAR,
-  REVERSE_GEAR,
+  type AutoSelector,
 } from '../../vehicle/powertrain'
 import { inScreenSpace } from '../renderer'
 import type { RenderContext } from '../scene'
@@ -59,10 +60,12 @@ const GHOST_ALPHA = 0.28
  * outlines drawn over them to be the thing that reads.
  */
 const EDIT_ALPHA = 0.5
+/** How much of a control the car is refusing right now still shows. */
+const REFUSED_ALPHA = 0.45
 
 export function drawUi(context: RenderContext): void {
   const { ui } = context
-  const layout = computeTouchLayout(context.viewport, ui.controls, ui.gatePattern)
+  const layout = computeTouchLayout(context.viewport, ui.controls, ui.gatePattern, ui.mode)
   const editing = ui.menu === 'edit'
 
   // The gate is an element over the canvas, not paint on it, so it is placed
@@ -450,22 +453,51 @@ function drawGearbox(context: RenderContext, layout: TouchLayout): void {
       drawLabel(ctx, layout.sequentialDown, '-', 0.42)
       break
     case 'automatic':
-      drawButtonBox(ctx, layout.gearDisplay, false)
-      drawLabel(ctx, layout.gearDisplay, gearLabel(powertrain.gear), 0.5)
-      drawButtonBox(
-        ctx,
-        layout.reverse,
-        ui.pressedButtons.has('reverse') || powertrain.gear === REVERSE_GEAR,
-      )
-      drawLabel(ctx, layout.reverse, 'RE', 0.42)
-      drawButtonBox(
-        ctx,
-        layout.neutral,
-        ui.pressedButtons.has('neutral') || powertrain.gear === NEUTRAL_GEAR,
-      )
-      drawLabel(ctx, layout.neutral, 'N', 0.42)
+      drawAutoSelector(context, layout)
       break
   }
+}
+
+/** Which button each position of the automatic's selector is. */
+const AUTO_BUTTONS: Readonly<Record<AutoSelector, 'park' | 'reverse' | 'neutral' | 'drive'>> = {
+  P: 'park',
+  R: 'reverse',
+  N: 'neutral',
+  D: 'drive',
+}
+
+/**
+ * The automatic's selector: what the box is doing across the top, and the four
+ * positions of the lever in a row underneath.
+ *
+ * Every position is a button of its own and every one of them is live, so
+ * there is a way back to D from anywhere -- which is the whole reason this
+ * replaced the pair of buttons that could leave the car in neutral with
+ * nothing to press. P is the one that can be refused, and it says so by going
+ * faint while the car is still moving faster than the pawl would survive.
+ */
+function drawAutoSelector(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, ui, powertrain } = context
+  const current = autoSelectorAt(powertrain.park, powertrain.gear)
+
+  drawButtonBox(ctx, layout.gearDisplay, false)
+  drawLabel(ctx, layout.gearDisplay, autoDisplayLabel(current, powertrain.gear), 0.62)
+
+  for (const position of AUTO_SELECTORS) {
+    const button = AUTO_BUTTONS[position]
+    const rect = layout[button]
+    const refused = position === 'P' && !powertrain.parkReady
+    ctx.save()
+    if (refused) ctx.globalAlpha *= REFUSED_ALPHA
+    drawButtonBox(ctx, rect, ui.pressedButtons.has(button) || current === position)
+    drawLabel(ctx, rect, position, 0.5)
+    ctx.restore()
+  }
+}
+
+/** P, R, N, or D with the gear the box has picked beside it. */
+function autoDisplayLabel(position: AutoSelector, gear: number): string {
+  return position === 'D' ? `D ${gearLabel(gear)}` : position
 }
 
 /**
@@ -602,6 +634,7 @@ const KEYBOARD_LINES: readonly string[] = [
   '1 a 6              marcha (so no manual)',
   'N ou 0             ponto morto',
   'X                  re',
+  'P                  estacionar (automatico)',
   'R                  dar partida',
   'T                  cambio: auto, seq, manual',
   'M                  mudo',
@@ -619,6 +652,8 @@ const TOUCH_LINES: readonly string[] = [
   'MAO                freio de mao',
   'cambio no meio     arraste o manete pelo H',
   '                   (corredor no centro = N)',
+  'P R N D            seletor do automatico;',
+  '                   P so quase parado',
   'AUT SEQ MAN        modo do cambio',
   'PARTIDA            religar o motor',
   'botao de ajustes   mover, redimensionar,',

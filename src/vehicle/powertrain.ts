@@ -76,6 +76,14 @@ const AUTO_CREEP_TORQUE = 28
 const DIRECTION_CHANGE_SPEED = 3
 
 /**
+ * Above this speed the parking pawl will not go in [m/s]. It is a pin dropped
+ * between two teeth of a turning shaft: at walking pace it would not drop, and
+ * at anything more it would be torn out. Half a metre a second is a car that
+ * has all but stopped, which is the only place P belongs.
+ */
+export const PARK_MAX_SPEED = 0.5
+
+/**
  * How much faster a revving engine warms than one left to idle: at the
  * limiter, two and a half times. It is the one thing a driver can do about a
  * cold engine, so it is worth something.
@@ -131,12 +139,32 @@ export function gearLabel(gear: number): string {
   return String(gear)
 }
 
+/**
+ * The four positions of an automatic's selector, in the order they sit on a
+ * real gate. Every one of them is reachable from every other: the pawl and the
+ * direction changes have speeds they refuse below, never an order to be walked
+ * in -- which is the whole difference between a selector and two buttons.
+ */
+export type AutoSelector = 'P' | 'R' | 'N' | 'D'
+
+export const AUTO_SELECTORS: readonly AutoSelector[] = ['P', 'R', 'N', 'D']
+
+/** Where the selector is standing, read back off the gearbox itself. */
+export function autoSelectorAt(park: boolean, gear: number): AutoSelector {
+  if (park) return 'P'
+  if (gear === REVERSE_GEAR) return 'R'
+  if (gear === NEUTRAL_GEAR) return 'N'
+  return 'D'
+}
+
 /** Discrete driver actions. Continuous ones (throttle, clutch) are not here. */
 export type PowertrainCommand =
   | { readonly kind: 'shiftUp' }
   | { readonly kind: 'shiftDown' }
   /** -1 reverse, 0 neutral, 1..n a forward gear. */
   | { readonly kind: 'selectGear'; readonly gear: number }
+  /** One position of the automatic's selector; ignored by the other boxes. */
+  | { readonly kind: 'selectAuto'; readonly position: AutoSelector }
   | { readonly kind: 'start' }
   | { readonly kind: 'cycleMode' }
   /** Straight to one mode, the way the settings menu picks it. */
@@ -146,6 +174,12 @@ export interface PowertrainState {
   mode: TransmissionMode
   /** -1 reverse, 0 neutral, 1..n a forward gear. */
   gear: number
+  /**
+   * Parking pawl, in the automatic only. It is not a gear: the box is in
+   * neutral underneath it, and what holds the car is the pawl locking the
+   * output shaft. Anything that picks a gear takes it back out.
+   */
+  park: boolean
   rpm: number
   running: boolean
   /** True from the moment the engine dies until it is running again. */
@@ -180,6 +214,7 @@ export function createPowertrainState(mode: TransmissionMode, idleRpm: number): 
   return {
     mode,
     gear: mode === 'manual' ? NEUTRAL_GEAR : 1,
+    park: false,
     rpm: idleRpm,
     running: true,
     stalled: false,
@@ -205,6 +240,8 @@ export function resetEngineWarmth(state: PowertrainState): void {
 export interface PowertrainTelemetry {
   rpm: number
   gear: number
+  /** Parking pawl in, which is not a gear and so cannot be read off one. */
+  park: boolean
   mode: TransmissionMode
   /** Pedal position, 0 pressed .. 1 released. */
   clutch: number
@@ -243,6 +280,7 @@ export function createPowertrainTelemetry(mode: TransmissionMode): PowertrainTel
   return {
     rpm: 0,
     gear: NEUTRAL_GEAR,
+    park: false,
     mode,
     clutch: 1,
     engagement: 0,
@@ -365,6 +403,9 @@ function accepts(
 /** Puts a gear in, with the torque cut the mode asks for. */
 function engage(state: PowertrainState, params: PowertrainParams, gear: number): void {
   state.gear = gear
+  // Moving the lever pulls the pawl out, whichever position it moved to. The
+  // pawl is only ever hard to put in, never hard to take out.
+  state.park = false
   switch (state.mode) {
     case 'automatic':
       state.shiftCut = params.automaticShiftTime
@@ -385,6 +426,9 @@ function changeMode(state: PowertrainState, mode: TransmissionMode, vx: number):
   state.mode = mode
   state.shiftCut = 0
   state.shiftGuard = 0
+  // Only the automatic has a pawl to leave in, so fitting any other gearbox
+  // takes it out with it.
+  if (mode !== 'automatic') state.park = false
   if (mode === 'manual') {
     // The pedal is up, so a gear left in at a standstill would stall the
     // engine the instant the mode changed. Hand the car over in neutral.
@@ -417,12 +461,24 @@ export function applyPowertrainCommand(
     case 'setMode':
       if (command.mode !== state.mode) changeMode(state, command.mode, vx)
       return
+    case 'selectAuto': {
+      // The other two boxes have no such lever, and must not be moved by one.
+      if (state.mode !== 'automatic') return
+      selectAuto(state, params, command.position, vx)
+      return
+    }
     case 'selectGear': {
       // Only the manual gate has a lever per gear. The clutchless modes take
       // neutral and reverse from their own keys and nothing else: an automatic
       // picks its gears itself, a sequential box walks one at a time.
       if (command.gear > 0 && state.mode !== 'manual') return
-      if (command.gear === state.gear || !accepts(state, params, command.gear, vx)) return
+      if (command.gear === state.gear) {
+        // Asking for the gear that is already in is not a shift, but it is
+        // still a hand on the lever: it lets the parking pawl back out.
+        state.park = false
+        return
+      }
+      if (!accepts(state, params, command.gear, vx)) return
       engage(state, params, command.gear)
       return
     }
@@ -442,6 +498,62 @@ export function applyPowertrainCommand(
       return
     }
   }
+}
+
+/**
+ * Moves the automatic's selector to one of its four positions.
+ *
+ * Each one is reachable from each of the others -- that is what makes it a
+ * selector rather than the pair of buttons it replaced, where neutral was a
+ * dead end with no way back to drive. The only refusals left are the ones a
+ * real gearbox has: the pawl will not drop above walking pace, and neither
+ * direction goes in while the car is rolling the other way.
+ */
+function selectAuto(
+  state: PowertrainState,
+  params: PowertrainParams,
+  position: AutoSelector,
+  vx: number,
+): void {
+  switch (position) {
+    case 'P':
+      if (!parkAvailable(vx)) return
+      // The box goes to neutral and the pawl holds the shaft: a gear left in
+      // under the pawl would have the engine pulling against the pin.
+      state.gear = NEUTRAL_GEAR
+      state.shiftCut = 0
+      state.shiftGuard = 0
+      state.park = true
+      return
+    case 'N':
+      // Always available, and the way out of P as much as the way out of D.
+      if (state.gear !== NEUTRAL_GEAR) engage(state, params, NEUTRAL_GEAR)
+      state.park = false
+      return
+    case 'R':
+      if (state.gear === REVERSE_GEAR) {
+        state.park = false
+        return
+      }
+      if (!accepts(state, params, REVERSE_GEAR, vx)) return
+      engage(state, params, REVERSE_GEAR)
+      return
+    case 'D':
+      // Into first, and from there the box picks its own gear. Already in a
+      // forward gear means the lever is where it was asked to be.
+      if (state.gear >= 1) {
+        state.park = false
+        return
+      }
+      if (!accepts(state, params, 1, vx)) return
+      engage(state, params, 1)
+      return
+  }
+}
+
+/** Whether the pawl would drop right now, for a selector that shows it. */
+export function parkAvailable(vx: number): boolean {
+  return Math.abs(vx) < PARK_MAX_SPEED
 }
 
 /** Automatic mode picks its own gear from the engine speed. */
@@ -765,6 +877,7 @@ export function stepPowertrain(
 
   telemetry.rpm = state.rpm
   telemetry.gear = state.gear
+  telemetry.park = state.park
   telemetry.mode = state.mode
   telemetry.clutch = state.clutch
   telemetry.engagement = state.engagement

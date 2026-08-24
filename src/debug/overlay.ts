@@ -54,7 +54,8 @@ function buildLines(frame: DebugFrame): string[] {
     row('energia', t.kineticEnergy.toFixed(0), 'J'),
     row('dE/dt', t.kineticEnergyRate.toFixed(0), 'W'),
     row('rpm', engine, ''),
-    row('marcha', gearLabel(p.gear), ''),
+    // The pawl is not a gear, so it has to be said instead of read off one.
+    row('marcha', p.park ? 'P' : gearLabel(p.gear), ''),
     row('cambio', transmissionModeLabel(p.mode), ''),
     row('embreag', p.clutch.toFixed(2), ''),
     row('engate', p.engagement.toFixed(2), ''),
