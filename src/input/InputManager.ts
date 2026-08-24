@@ -16,6 +16,7 @@ import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
 import { moveShifter, releaseShifter } from '../ui/shifterGate'
 import {
+  columnAtX,
   computeTouchLayout,
   containsPoint,
   gateColumns,
@@ -419,7 +420,7 @@ export class InputManager {
   private updateShifter(layout: TouchLayout, x: number, y: number): void {
     const gate = gateGeometry(layout, this.ui.forwardGears)
     const gear = moveShifter(this.ui.shifter, {
-      targetColumn: (x - gate.firstColumnX) / gate.columnSpacing,
+      targetColumn: columnAtX(gate, x),
       targetLane: (y - gate.corridorY) / gate.laneReach,
       columns: gate.columns,
       forwardGears: this.ui.forwardGears,

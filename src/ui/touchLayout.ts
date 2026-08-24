@@ -245,42 +245,126 @@ export function steeringKnobDiameter(layout: TouchLayout): number {
 }
 
 // ------------------------------------------------------------------ H gate
+//
+// The gate is drawn from a fixed piece of art (gear_gate.png): a plate
+// routed with four channels, three forward pairs on the left and a fourth on
+// the right whose lower half is reverse -- its upper half is unused, since
+// there is no sixth pair. The fractions below were measured on that art's
+// own trimmed opaque box (0..1 across its width and height) so a finger's
+// drag lines up with the groove drawn under it. Columns are counted from the
+// left; the lane is -1 up, 0 in the corridor and +1 down.
+//
+//     1   3   5   x     <- x: column 3's upper channel. Routed into the art
+//     |   |   |   .        like the rest, but nothing lives there -- darkened
+//     +---+---+---+        rather than left looking like a fourth pair.
+//     |   |   |   |
+//     2   4   6   R
+
+/** Width/height of the trimmed gate art -- the art is never stretched off
+ *  its own proportions when it is fitted into the layout. */
+const GATE_ART_ASPECT = 527 / 688
+
+/** Centre-x of each of the art's four channels, left to right. */
+const GATE_COLUMN_X_FRAC: readonly number[] = [0.261, 0.4, 0.598, 0.737]
+/** Centre-y of the horizontal corridor connecting the channels. */
+const GATE_CORRIDOR_Y_FRAC = 0.5
+/** Corridor to a fully seated gear, along the art's own height. */
+const GATE_LANE_REACH_FRAC = 0.2885
+/** Knob diameter, relative to the art's width -- sized for a thumb. */
+const KNOB_DIAMETER_FRAC = 0.4
+/** Gate-box height reserved above and below the art for the gear numbers,
+ *  so a label never has to sit on top of the metal. */
+const LABEL_BAND_FRAC = 0.13
 
 /**
- * The gate as coordinates.
- *
- *     1   3   5
- *     |   |   |
- *     +---+---+---+     <- the corridor: neutral, all of it
- *     |   |   |   |
- *     2   4   6   R
- *
- * Columns are counted from the left; the lane is -1 up, 0 in the corridor and
- * +1 down. Reverse is the bottom of one extra column on the right.
+ * Column 3's upper channel, in the same 0..1 art fractions: routed into the
+ * plate like every other channel, but reverse is the bottom of that column,
+ * not the top, so nothing is ever seated here. Darkened in code instead of
+ * left looking like a live position.
  */
+export const GATE_DEAD_SLOT = {
+  centerXFrac: 0.737,
+  halfWidthFrac: 0.06,
+  topFrac: 0.17,
+  bottomFrac: 0.465,
+}
+
+/** Manifest keys of the gate's two layers. */
+export const GEAR_GATE_KEY = 'gear_gate'
+export const GEAR_KNOB_KEY = 'gear_knob'
+
 export interface GateGeometry {
   readonly columns: number
-  /** Centre of column 0. */
-  readonly firstColumnX: number
-  readonly columnSpacing: number
+  /** Where the art is actually drawn, fitted to its own proportions. */
+  readonly art: Rect
+  /** Centre-x of each column, left to right, in layout pixels. */
+  readonly columnX: readonly number[]
   readonly corridorY: number
-  /** Distance from the corridor to a fully seated gear. */
+  /** Distance from the corridor to a fully seated gear, in layout pixels. */
   readonly laneReach: number
-  readonly knobRadius: number
+  readonly knobDiameter: number
+  /** Where gear numbers sit, above and below the art. */
+  readonly labelTopY: number
+  readonly labelBottomY: number
 }
 
 export function gateGeometry(layout: TouchLayout, forwardGears: number): GateGeometry {
   const columns = gateColumns(forwardGears)
   const { gate } = layout
-  const columnSpacing = gate.width / columns
+  const band = gate.height * LABEL_BAND_FRAC
+  const art = fitContain(
+    { x: gate.x, y: gate.y + band, width: gate.width, height: gate.height - band * 2 },
+    GATE_ART_ASPECT,
+  )
   return {
     columns,
-    firstColumnX: gate.x + columnSpacing / 2,
-    columnSpacing,
-    corridorY: gate.y + gate.height / 2,
-    laneReach: gate.height * 0.34,
-    knobRadius: Math.min(columnSpacing, gate.height) * 0.22,
+    art,
+    columnX: GATE_COLUMN_X_FRAC.slice(0, columns).map((frac) => art.x + frac * art.width),
+    corridorY: art.y + GATE_CORRIDOR_Y_FRAC * art.height,
+    laneReach: GATE_LANE_REACH_FRAC * art.height,
+    knobDiameter: art.width * KNOB_DIAMETER_FRAC,
+    labelTopY: art.y - band / 2,
+    labelBottomY: art.y + art.height + band / 2,
   }
+}
+
+/** The largest rect with `aspect` (width/height) centred inside `box`. */
+function fitContain(box: Rect, aspect: number): Rect {
+  const width = box.height * aspect <= box.width ? box.height * aspect : box.width
+  const height = width / aspect
+  return {
+    x: box.x + (box.width - width) / 2,
+    y: box.y + (box.height - height) / 2,
+    width,
+    height,
+  }
+}
+
+/**
+ * Continuous column (0..columns-1) for an x position, by inverting the same
+ * piecewise scale the art's channels were measured against. The columns are
+ * not evenly spaced, so this -- not a single division -- is what keeps a
+ * dragging finger over the groove drawn under it.
+ */
+export function columnAtX(geometry: GateGeometry, x: number): number {
+  const { columnX } = geometry
+  if (x <= columnX[0]) return 0
+  for (let i = 1; i < columnX.length; i++) {
+    if (x <= columnX[i]) {
+      const span = columnX[i] - columnX[i - 1]
+      return i - 1 + (span > 0 ? (x - columnX[i - 1]) / span : 0)
+    }
+  }
+  return columnX.length - 1
+}
+
+/** Inverse of `columnAtX`: the x position of a (possibly fractional) column. */
+export function columnToX(geometry: GateGeometry, column: number): number {
+  const { columnX } = geometry
+  const i0 = clamp(Math.floor(column), 0, columnX.length - 1)
+  const i1 = Math.min(i0 + 1, columnX.length - 1)
+  const t = clamp(column - i0, 0, 1)
+  return columnX[i0] + (columnX[i1] - columnX[i0]) * t
 }
 
 /** Forward gears in pairs, plus the column reverse lives at the bottom of. */

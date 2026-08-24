@@ -14,7 +14,7 @@ import playerSedanUrl from './data/cars/player_sedan.json?url'
 
 import { loadEngineAudioParams } from './audio/audioParams'
 import { createEngineAudio, resumeEngineAudio, setEngineAudioAudible } from './audio/engineAudio'
-import { loadSprites } from './assets/loader'
+import { loadAssets } from './assets/loader'
 import { loadManifest, spriteKeyForPath } from './assets/manifest'
 import { describeError, drawBootMessage } from './game/bootScreen'
 import { startGame } from './game/game'
@@ -22,6 +22,7 @@ import { createGameState, INITIAL_TRANSMISSION_MODE } from './game/state'
 import { InputManager } from './input/InputManager'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
+import { GEAR_GATE_KEY, GEAR_KNOB_KEY } from './ui/touchLayout'
 import { createUiState, prefersTouchControls } from './ui/uiState'
 import { loadCarParams } from './vehicle/carParams'
 
@@ -90,7 +91,7 @@ async function boot(surface: Screen): Promise<void> {
   )
   const playerSpriteKey = spriteKeyForPath(manifest, car.sprite)
   const assets = await withTimeout(
-    loadSprites(manifest, [playerSpriteKey, GROUND_SPRITE_KEY]),
+    loadAssets(manifest, [playerSpriteKey, GROUND_SPRITE_KEY], [GEAR_GATE_KEY, GEAR_KNOB_KEY]),
     `imagens (${manifest.sprites[playerSpriteKey]?.path ?? playerSpriteKey}, ` +
       `${manifest.sprites[GROUND_SPRITE_KEY]?.path ?? GROUND_SPRITE_KEY})`,
   )

@@ -29,8 +29,16 @@ export interface LoadedSprite {
   readonly trim: SpriteTrim
 }
 
+/** A loaded screen-space image: the same trimming as a sprite, no physical size. */
+export interface LoadedUiImage {
+  readonly key: string
+  readonly image: HTMLImageElement
+  readonly trim: SpriteTrim
+}
+
 export interface AssetStore {
   sprite(key: string): LoadedSprite
+  ui(key: string): LoadedUiImage
 }
 
 /** Alpha below this counts as empty padding (kills soft halos around art). */
@@ -131,19 +139,24 @@ function measureTrim(image: HTMLImageElement): SpriteTrim {
 }
 
 /**
- * Loads the sprites named by `keys`. Only what the current stage draws is
- * fetched; every other entry stays in the manifest waiting for its stage.
+ * Loads the sprites and UI images named by `spriteKeys`/`uiKeys`. Only what
+ * the current stage draws is fetched; every other entry stays in the
+ * manifest waiting for its stage.
  */
-export async function loadSprites(manifest: AssetManifest, keys: readonly string[]): Promise<AssetStore> {
-  const loaded = new Map<string, LoadedSprite>()
+export async function loadAssets(
+  manifest: AssetManifest,
+  spriteKeys: readonly string[],
+  uiKeys: readonly string[],
+): Promise<AssetStore> {
+  const sprites = new Map<string, LoadedSprite>()
+  const ui = new Map<string, LoadedUiImage>()
 
-  await Promise.all(
-    keys.map(async (key) => {
+  await Promise.all([
+    ...spriteKeys.map(async (key) => {
       const entry = manifest.sprites[key]
       if (entry === undefined) throw new Error(`Sprite "${key}" nao existe no manifesto`)
-      const url = assetUrl(entry.path)
-      const image = await loadImage(url)
-      loaded.set(key, {
+      const image = await loadImage(assetUrl(entry.path))
+      sprites.set(key, {
         key,
         image,
         lengthMeters: entry.lengthMeters,
@@ -151,13 +164,24 @@ export async function loadSprites(manifest: AssetManifest, keys: readonly string
         trim: measureTrim(image),
       })
     }),
-  )
+    ...uiKeys.map(async (key) => {
+      const entry = manifest.ui[key]
+      if (entry === undefined) throw new Error(`Imagem de UI "${key}" nao existe no manifesto`)
+      const image = await loadImage(assetUrl(entry.path))
+      ui.set(key, { key, image, trim: measureTrim(image) })
+    }),
+  ])
 
   return {
     sprite(key: string): LoadedSprite {
-      const sprite = loaded.get(key)
+      const sprite = sprites.get(key)
       if (sprite === undefined) throw new Error(`Sprite "${key}" nao foi carregado`)
       return sprite
+    },
+    ui(key: string): LoadedUiImage {
+      const image = ui.get(key)
+      if (image === undefined) throw new Error(`Imagem de UI "${key}" nao foi carregada`)
+      return image
     },
   }
 }
