@@ -1,8 +1,10 @@
 /** Screen-layer state: what is on show and what is being pressed right now. */
 import { DEFAULT_VOLUME } from '../audio/engineAudio'
+import type { FuelCatalog } from '../vehicle/fuel'
 import { NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
 import type { ControlConfig, ControlSlot } from './controlLayout'
 import { gearGatePosition } from './touchLayout'
+import type { VehicleSettings } from './vehicleSettings'
 
 export type UiButton =
   | 'menu'
@@ -86,6 +88,16 @@ export interface UiState {
    * mid-session still opens where it left off.
    */
   readonly controls: ControlConfig
+  /**
+   * What the player has done to the car itself. Mutated by the menu and read
+   * by the loop, which reloads the engine's numbers when the fuel changes.
+   */
+  readonly vehicle: VehicleSettings
+  /**
+   * Every fuel there is. It lives here because the menu is what picks from
+   * it -- the game only ever wants the one entry the player has chosen.
+   */
+  readonly fuels: FuelCatalog
   /** Control being edited, null while nothing is selected. */
   editing: ControlSlot | null
   /**
@@ -103,14 +115,20 @@ export interface UiState {
   clutchPedal: number
 }
 
-export function createUiState(
-  controlsVisible: boolean,
-  mode: TransmissionMode,
-  forwardGears: number,
-  controls: ControlConfig,
-): UiState {
+export interface UiStateOptions {
+  /** Whether the touch layer starts on. */
+  readonly controlsVisible: boolean
+  /** How many forward gears the gate has to lay out. */
+  readonly forwardGears: number
+  readonly controls: ControlConfig
+  readonly vehicle: VehicleSettings
+  readonly fuels: FuelCatalog
+}
+
+export function createUiState(options: UiStateOptions): UiState {
+  const { controls, forwardGears, vehicle } = options
   return {
-    controlsVisible,
+    controlsVisible: options.controlsVisible,
     instructionsVisible: true,
     debugVisible: false,
     muted: false,
@@ -131,9 +149,11 @@ export function createUiState(
     forwardGears,
     menu: 'none',
     controls,
+    vehicle,
+    fuels: options.fuels,
     editing: null,
     latched: new Map<ControlSlot, number>(),
-    mode,
+    mode: vehicle.transmission,
     gear: NEUTRAL_GEAR,
     clutchPedal: 1,
   }

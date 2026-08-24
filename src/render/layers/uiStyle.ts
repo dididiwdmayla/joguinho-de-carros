@@ -50,6 +50,43 @@ export function drawLabel(
   ctx.textBaseline = 'alphabetic'
 }
 
+/**
+ * Sets the row font at `scale` of the row's height, shrunk until the text fits
+ * the width it was given. A label and a value share one row, so neither may
+ * spill: they would land on top of each other rather than off the panel.
+ */
+function setRowFont(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  rect: Rect,
+  scale: number,
+  maxWidth: number,
+): void {
+  let size = Math.max(10, rect.height * scale)
+  ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  const natural = ctx.measureText(text).width
+  if (natural > maxWidth) {
+    size = Math.max(8, size * (maxWidth / natural))
+    ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  }
+}
+
+/**
+ * How wide a row's text wants to be at its natural size. A row shares its
+ * width between a label and a value, and only the layer drawing it knows how
+ * much each of them deserves -- so it has to be able to ask.
+ */
+export function rowTextWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  rect: Rect,
+  scale: number,
+): number {
+  const size = Math.max(10, rect.height * scale)
+  ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  return ctx.measureText(text).width
+}
+
 /** Left-aligned caption inside a row, for menu entries. */
 export function drawRowLabel(
   ctx: CanvasRenderingContext2D,
@@ -57,9 +94,9 @@ export function drawRowLabel(
   label: string,
   scale: number,
   color: string = GLYPH,
+  maxWidth: number = rect.width - rect.height * 0.8,
 ): void {
-  const size = Math.max(10, rect.height * scale)
-  ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  setRowFont(ctx, label, rect, scale, maxWidth)
   ctx.fillStyle = color
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
@@ -74,9 +111,9 @@ export function drawRowValue(
   value: string,
   scale: number,
   color: string = ACCENT,
+  maxWidth: number = rect.width - rect.height * 0.8,
 ): void {
-  const size = Math.max(10, rect.height * scale)
-  ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
+  setRowFont(ctx, value, rect, scale, maxWidth)
   ctx.fillStyle = color
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'

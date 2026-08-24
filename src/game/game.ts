@@ -22,7 +22,9 @@ import { stepVehicle } from '../vehicle/physics'
 import { applyPowertrainCommand, transmissionModeLabel } from '../vehicle/powertrain'
 import { copyVehicleState } from '../vehicle/vehicleState'
 import { syncShifterToGear } from '../ui/uiState'
-import type { GameState } from './state'
+import { saveVehicleSettings } from '../ui/vehicleSettings'
+import { resolveFuel } from '../vehicle/fuel'
+import { applySelectedFuel, type GameState } from './state'
 
 /** Weight of one frame in the smoothed fps readout. */
 const FPS_SMOOTHING = 0.08
@@ -89,6 +91,8 @@ function advanceFrame(state: GameState, timestamp: number): void {
     applyPowertrainCommand(state.powertrain, state.car.powertrain, command, state.vehicle.vx)
   }
 
+  syncVehicleSettings(state)
+
   // Asking to rotate only makes sense while the on-screen controls are in use
   // and the browser refused to pin the orientation for us.
   state.ui.rotateHintVisible =
@@ -125,6 +129,23 @@ function advanceFrame(state: GameState, timestamp: number): void {
 
   const alpha = clamp(state.accumulator / FIXED_DT, 0, 1)
   renderFrame(buildRenderContext(state, input, alpha))
+}
+
+/**
+ * Keeps the car and the settings that describe it in step, in both directions.
+ *
+ * The fuel is chosen in the menu and resolved here, once, into the numbers the
+ * physics runs on. The gearbox is the other way round: it can be changed from
+ * the menu, a button or a key, so whatever the powertrain ended up with is
+ * what gets remembered.
+ */
+function syncVehicleSettings(state: GameState): void {
+  if (state.ui.vehicle.fuel !== state.fuelId) applySelectedFuel(state)
+
+  if (state.ui.vehicle.transmission !== state.powertrain.mode) {
+    state.ui.vehicle.transmission = state.powertrain.mode
+    saveVehicleSettings(state.ui.vehicle)
+  }
 }
 
 /** Feeds the camera the car's position and its velocity in world axes. */
@@ -177,6 +198,7 @@ function buildRenderContext(
         cameraY: state.cameraView.y,
         fps: state.fps,
         audio: state.audio.readout,
+        fuel: resolveFuel(state.ui.fuels, state.fuelId).label,
       }
     : null
 

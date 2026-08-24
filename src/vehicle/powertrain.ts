@@ -75,6 +75,13 @@ const AUTO_CREEP_TORQUE = 28
 /** Above this speed the gearbox refuses the opposite direction [m/s]. */
 const DIRECTION_CHANGE_SPEED = 3
 
+/**
+ * How much faster a revving engine warms than one left to idle: at the
+ * limiter, two and a half times. It is the one thing a driver can do about a
+ * cold engine, so it is worth something.
+ */
+const REV_WARM_GAIN = 1.5
+
 export type TransmissionMode = 'automatic' | 'sequential' | 'manual'
 
 /** Cycling order of the mode key and the on-screen selector. */
@@ -99,6 +106,24 @@ export function transmissionModeLabel(mode: TransmissionMode): string {
   }
 }
 
+/** Full name of the mode, for the settings menu rather than the button. */
+export function transmissionModeName(mode: TransmissionMode): string {
+  switch (mode) {
+    case 'automatic':
+      return 'AUTOMATICO'
+    case 'sequential':
+      return 'SEQUENCIAL'
+    case 'manual':
+      return 'MANUAL'
+  }
+}
+
+/** The mode after this one, wrapping round. */
+export function nextTransmissionMode(mode: TransmissionMode): TransmissionMode {
+  const index = TRANSMISSION_MODES.indexOf(mode)
+  return TRANSMISSION_MODES[(index + 1) % TRANSMISSION_MODES.length]
+}
+
 /** 'R', 'N' or the gear number. */
 export function gearLabel(gear: number): string {
   if (gear === REVERSE_GEAR) return 'R'
@@ -114,6 +139,8 @@ export type PowertrainCommand =
   | { readonly kind: 'selectGear'; readonly gear: number }
   | { readonly kind: 'start' }
   | { readonly kind: 'cycleMode' }
+  /** Straight to one mode, the way the settings menu picks it. */
+  | { readonly kind: 'setMode'; readonly mode: TransmissionMode }
 
 export interface PowertrainState {
   mode: TransmissionMode
@@ -141,6 +168,12 @@ export interface PowertrainState {
   wheelspin: boolean
   /** True while engine and gearbox are turning as one shaft. */
   locked: boolean
+  /**
+   * Working temperature, 0 stone cold .. 1 warmed through. Not a simulation of
+   * anything: one number that climbs while the engine runs, and the only thing
+   * that reads it is the stall speed.
+   */
+  warmth: number
 }
 
 export function createPowertrainState(mode: TransmissionMode, idleRpm: number): PowertrainState {
@@ -159,7 +192,13 @@ export function createPowertrainState(mode: TransmissionMode, idleRpm: number): 
     wheelSlip: 0,
     wheelspin: false,
     locked: false,
+    warmth: 0,
   }
+}
+
+/** Back to stone cold. An engine handed a new set of numbers is a new engine. */
+export function resetEngineWarmth(state: PowertrainState): void {
+  state.warmth = 0
 }
 
 /** Everything the debug overlay reads out of one powertrain step. */
@@ -186,6 +225,10 @@ export interface PowertrainTelemetry {
   locked: boolean
   running: boolean
   stalled: boolean
+  /** Working temperature, 0 cold .. 1 warm. */
+  warmth: number
+  /** Stall speed actually in force this step, cold bonus included [rpm]. */
+  stallRpm: number
   /**
    * The four conditions of a stall, reported one by one so it is always
    * visible which of them is the one not met.
@@ -213,6 +256,8 @@ export function createPowertrainTelemetry(mode: TransmissionMode): PowertrainTel
     locked: false,
     running: true,
     stalled: false,
+    warmth: 0,
+    stallRpm: 0,
     stallBelowRpm: false,
     stallRunning: true,
     stallEngaged: false,
@@ -335,6 +380,21 @@ function engage(state: PowertrainState, params: PowertrainParams, gear: number):
   }
 }
 
+/** Fits another gearbox, leaving the car in a state that mode can hold. */
+function changeMode(state: PowertrainState, mode: TransmissionMode, vx: number): void {
+  state.mode = mode
+  state.shiftCut = 0
+  state.shiftGuard = 0
+  if (mode === 'manual') {
+    // The pedal is up, so a gear left in at a standstill would stall the
+    // engine the instant the mode changed. Hand the car over in neutral.
+    state.clutch = 1
+    if (Math.abs(vx) < 0.5) state.gear = NEUTRAL_GEAR
+  } else if (state.gear === NEUTRAL_GEAR && Math.abs(vx) < 0.5) {
+    state.gear = 1
+  }
+}
+
 /**
  * Applies one discrete driver action. Called between frames, never inside the
  * fixed step, so a key press is consumed exactly once however many steps run.
@@ -350,20 +410,13 @@ export function applyPowertrainCommand(
       if (!state.running && state.starter <= 0) state.starter = params.starterTime
       return
     case 'cycleMode': {
-      const next = TRANSMISSION_MODES[(TRANSMISSION_MODES.indexOf(state.mode) + 1) % TRANSMISSION_MODES.length]
-      state.mode = next
-      state.shiftCut = 0
-      state.shiftGuard = 0
-      if (next === 'manual') {
-        // The pedal is up, so a gear left in at a standstill would stall the
-        // engine the instant the mode changed. Hand the car over in neutral.
-        state.clutch = 1
-        if (Math.abs(vx) < 0.5) state.gear = NEUTRAL_GEAR
-      } else if (state.gear === NEUTRAL_GEAR && Math.abs(vx) < 0.5) {
-        state.gear = 1
-      }
+      const index = TRANSMISSION_MODES.indexOf(state.mode)
+      changeMode(state, TRANSMISSION_MODES[(index + 1) % TRANSMISSION_MODES.length], vx)
       return
     }
+    case 'setMode':
+      if (command.mode !== state.mode) changeMode(state, command.mode, vx)
+      return
     case 'selectGear': {
       // Only the manual gate has a lever per gear. The clutchless modes take
       // neutral and reverse from their own keys and nothing else: an automatic
@@ -425,6 +478,7 @@ function stepAutomatic(state: PowertrainState, params: PowertrainParams, vx: num
 function stepAutomaticClutch(
   state: PowertrainState,
   params: PowertrainParams,
+  stallRpm: number,
   rpmTrans: number,
   throttle: number,
   dt: number,
@@ -439,11 +493,7 @@ function stepAutomaticClutch(
   // Once the gearbox is turning fast enough to drive the engine rather than be
   // dragged by it, the pedal comes out regardless of what the launch controller
   // thinks -- the limit below is what keeps that safe.
-  const driven = clamp(
-    (rpmTrans - params.stallRpm) / (params.autoEngageRpm - params.stallRpm),
-    0,
-    1,
-  )
+  const driven = clamp((rpmTrans - stallRpm) / (params.autoEngageRpm - stallRpm), 0, 1)
 
   // And below idle, whatever either of them wants, a slipping clutch can only
   // pass on what the engine is actually making. This is the whole reason these
@@ -490,6 +540,26 @@ export function stepPowertrain(
     }
   }
 
+  // --- Temperature --------------------------------------------------------
+  // One number, climbing while the engine turns and faster the harder it is
+  // worked. What it buys is the cold stall speed below, which slides back to
+  // the engine's own as the number reaches 1 -- gradually, never as a step.
+  if (state.running) {
+    const revs = clamp(
+      (state.rpm - params.idleRpm) / Math.max(1, params.maxRpm - params.idleRpm),
+      0,
+      1,
+    )
+    state.warmth = clamp(
+      state.warmth + ((1 + REV_WARM_GAIN * revs) * dt) / params.warmupTime,
+      0,
+      1,
+    )
+  }
+  // The speed the engine dies below, this step. Everything downstream reads
+  // this and never `params.stallRpm`: a cold engine simply has a higher one.
+  const stallRpm = params.stallRpm + params.coldStallBonus * (1 - state.warmth)
+
   const total = totalRatio(params, state.gear)
   const wheelSpeed = load.vx + state.wheelSlip
   const rpmTrans = transmissionRpm(params, total, wheelSpeed)
@@ -504,7 +574,7 @@ export function stepPowertrain(
     state.clutch += clamp(target - state.clutch, -rate * dt, rate * dt)
     state.engagement = state.running ? clutchEngagement(state.clutch) : 0
   } else {
-    stepAutomaticClutch(state, params, rpmTrans, driverThrottle, dt)
+    stepAutomaticClutch(state, params, stallRpm, rpmTrans, driverThrottle, dt)
     // Kept in step with the engagement so the readouts and the on-screen pedal
     // show the same thing whoever is working it.
     state.clutch = BITE_START + (BITE_END - BITE_START) * state.engagement
@@ -671,12 +741,12 @@ export function stepPowertrain(
   // engine below the speed it can recover from on its own. Applied before the
   // test rather than after it, so those modes simply never reach the first
   // condition and the test below is free of any mode of its own.
-  if (!manual && state.running) state.rpm = Math.max(state.rpm, params.stallRpm)
+  if (!manual && state.running) state.rpm = Math.max(state.rpm, stallRpm)
 
   // Four conditions, and nothing else: the engine is turning too slowly to
   // keep itself alive, it is still running, the plates are carrying, and there
   // is a gear for the car to drag it through.
-  const stallBelowRpm = state.rpm < params.stallRpm
+  const stallBelowRpm = state.rpm < stallRpm
   const stallRunning = state.running
   const stallEngaged = state.engagement > ENGAGED_THRESHOLD
   const stallInGear = state.gear !== NEUTRAL_GEAR
@@ -708,6 +778,8 @@ export function stepPowertrain(
   telemetry.locked = state.locked
   telemetry.running = state.running
   telemetry.stalled = state.stalled
+  telemetry.warmth = state.warmth
+  telemetry.stallRpm = stallRpm
   telemetry.stallBelowRpm = stallBelowRpm
   telemetry.stallRunning = stallRunning
   telemetry.stallEngaged = stallEngaged

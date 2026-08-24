@@ -21,14 +21,16 @@ import { clamp, wrapAngle } from '../core/math'
 import type { Viewport } from '../render/viewport'
 import {
   CONTROL_SLOTS,
+  DEFAULT_WHEEL_TURNS,
   emptyPlacements,
   LATCHABLE_SLOTS,
   MAX_CONTROL_SCALE,
   MIN_CONTROL_SCALE,
+  nextWheelTurns,
   presetPlacements,
   PRESET_IDS,
   saveControlConfig,
-  WHEEL_MAX_ANGLE,
+  wheelMaxAngle,
   type ControlPlacement,
   type ControlSlot,
 } from '../ui/controlLayout'
@@ -53,7 +55,13 @@ import {
   type TouchLayout,
 } from '../ui/touchLayout'
 import type { UiButton, UiState } from '../ui/uiState'
-import { CLUTCH_ENGAGE_LIMIT, type PowertrainCommand } from '../vehicle/powertrain'
+import { saveVehicleSettings } from '../ui/vehicleSettings'
+import { nextFuelId } from '../vehicle/fuel'
+import {
+  CLUTCH_ENGAGE_LIMIT,
+  nextTransmissionMode,
+  type PowertrainCommand,
+} from '../vehicle/powertrain'
 import { createInputState, type InputState } from './input'
 
 /** Pedal reading at the shallow edge, so a light press still does something. */
@@ -268,6 +276,15 @@ export class InputManager {
     return computeTouchLayout(this.viewport, this.ui.controls)
   }
 
+  /**
+   * Centre to full lock, as the player has it set [rad]. Read every time
+   * rather than held: changing it is meant to be felt on the next touch of
+   * the wheel, not on the next reload.
+   */
+  private wheelAngle(): number {
+    return wheelMaxAngle(this.ui.controls.wheelTurns)
+  }
+
   // ---------------------------------------------------------------- keyboard
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -392,7 +409,7 @@ export class InputManager {
     if (control === 'steering' && this.ui.controls.steeringStyle === 'wheel') {
       // Turning is relative to where the wheel already is, so putting a thumb
       // on it never snaps the steering to the angle of the thumb.
-      pointer.wheelAngle = clamp(this.state.steer, -1, 1) * WHEEL_MAX_ANGLE
+      pointer.wheelAngle = clamp(this.state.steer, -1, 1) * this.wheelAngle()
       pointer.wheelGrabAngle = wheelAngleAt(layout.steering, x, y)
       pointer.steer = clamp(this.state.steer, -1, 1)
     }
@@ -539,14 +556,15 @@ export class InputManager {
         if (this.ui.controls.steeringStyle === 'wheel') {
           // The finger drags the wheel round rather than to a position: only
           // the change in angle counts, so a hand can be re-seated mid-turn.
+          const lock = this.wheelAngle()
           const angle = wheelAngleAt(layout.steering, x, y)
           pointer.wheelAngle = clamp(
             pointer.wheelAngle + wrapAngle(angle - pointer.wheelGrabAngle),
-            -WHEEL_MAX_ANGLE,
-            WHEEL_MAX_ANGLE,
+            -lock,
+            lock,
           )
           pointer.wheelGrabAngle = angle
-          pointer.steer = pointer.wheelAngle / WHEEL_MAX_ANGLE
+          pointer.steer = pointer.wheelAngle / lock
           break
         }
         // Proportional to how far the finger sits from the bar's centre.
@@ -627,6 +645,19 @@ export class InputManager {
 
   private runMenuAction(action: MenuAction): void {
     switch (action) {
+      case 'wheelTurns':
+        this.ui.controls.wheelTurns = nextWheelTurns(this.ui.controls.wheelTurns)
+        break
+      case 'fuel':
+        // Only the choice is made here. Reloading the engine's numbers is the
+        // loop's job, which notices the id has changed on the next frame.
+        this.ui.vehicle.fuel = nextFuelId(this.ui.fuels, this.ui.vehicle.fuel)
+        break
+      case 'transmission':
+        // Through the same queue as the mode button and the T key: there is
+        // one way to change gearbox, whoever asked for it.
+        this.commands.push({ kind: 'setMode', mode: nextTransmissionMode(this.ui.mode) })
+        break
       case 'edit':
         // Nothing can be laid out that cannot be seen.
         this.ui.controlsVisible = true
@@ -651,7 +682,11 @@ export class InputManager {
         this.closeMenu()
         break
     }
+    // Written on every action rather than on the ones that changed something:
+    // the menu is the only place these are edited, and a phone closed from it
+    // has to open where it was left.
     saveControlConfig(this.ui.controls)
+    saveVehicleSettings(this.ui.vehicle)
   }
 
   // ----------------------------------------------------------------- editor
@@ -814,6 +849,9 @@ export class InputManager {
   private resetLayout(): void {
     this.ui.controls.preset = 'padrao'
     this.ui.controls.steeringStyle = 'bar'
+    // Controls only: it sits under CONTROLE, and must not quietly hand the
+    // player back a fuel or a gearbox they did not ask to be rid of.
+    this.ui.controls.wheelTurns = DEFAULT_WHEEL_TURNS
     this.ui.controls.placements = emptyPlacements()
     this.ui.latched.clear()
     this.ui.editing = null

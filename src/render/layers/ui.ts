@@ -9,7 +9,7 @@
  */
 import { clamp } from '../../core/math'
 import { drawDebugOverlay } from '../../debug/overlay'
-import { WHEEL_MAX_ANGLE, type ControlSlot } from '../../ui/controlLayout'
+import { wheelMaxAngle, type ControlSlot } from '../../ui/controlLayout'
 import {
   columnToX,
   computeTouchLayout,
@@ -286,9 +286,10 @@ function drawSteeringBar(context: RenderContext, layout: TouchLayout): void {
 
 /**
  * The wheel: the art itself, turned by exactly the angle the finger has wound
- * into it. Half a turn each way is full lock, which is what the input layer
- * maps a circular drag onto -- so what is under the thumb and what the front
- * wheels are doing are always the same picture.
+ * into it. How much of a turn full lock takes is the player's own setting, and
+ * it is the same number the input layer maps a circular drag onto -- so what
+ * is under the thumb and what the front wheels are doing are always the same
+ * picture, at any rack.
  */
 function drawSteeringWheel(context: RenderContext, layout: TouchLayout): void {
   const { ctx, input, ui, assets } = context
@@ -319,7 +320,7 @@ function drawSteeringWheel(context: RenderContext, layout: TouchLayout): void {
 
   ctx.save()
   ctx.translate(cx, cy)
-  ctx.rotate(clamp(input.steer, -1, 1) * WHEEL_MAX_ANGLE)
+  ctx.rotate(clamp(input.steer, -1, 1) * wheelMaxAngle(ui.controls.wheelTurns))
   ctx.drawImage(
     art.image,
     art.trim.x,
