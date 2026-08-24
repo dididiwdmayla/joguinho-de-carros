@@ -1,7 +1,23 @@
 /** Read-only snapshot handed to the debug overlay each frame. */
 import type { EngineAudioReadout } from '../audio/engineAudio'
+import type { Obb } from '../collision/obb'
+import type { StaticBody } from '../collision/world'
 import type { ParkingCheck } from '../level/parking'
 import type { VehicleTelemetry } from '../vehicle/physics'
+
+/**
+ * Every collision box there is, for the mode that draws them over the art.
+ *
+ * Null unless that mode is on: these are the live boxes the physics runs on,
+ * handed over by reference rather than copied, so what gets drawn is the
+ * geometry itself and not a description of it that could be wrong.
+ */
+export interface DebugBoxes {
+  /** The parked cars, the props and the walls, exactly as the level built them. */
+  readonly bodies: readonly StaticBody[]
+  /** The car's own box, at the interpolated pose the frame is being drawn at. */
+  readonly player: Obb
+}
 
 /** What the level being driven is doing. Null while no level is loaded. */
 export interface RunDebug {
@@ -44,4 +60,6 @@ export interface DebugFrame {
   readonly fuel: string
   /** The run in progress, or null in the menu. */
   readonly run: RunDebug | null
+  /** Every collision box, or null unless the box mode is on. */
+  readonly boxes: DebugBoxes | null
 }

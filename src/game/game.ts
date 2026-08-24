@@ -16,10 +16,11 @@ import {
   setEngineAudioVolume,
   updateEngineAudio,
 } from '../audio/engineAudio'
+import { setObbPose } from '../collision/obb'
 import { resolveVehicleCollisions } from '../collision/vehicleCollision'
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from '../core/constants'
 import { clamp, lerp, lerpAngle } from '../core/math'
-import type { DebugFrame } from '../debug/debugFrame'
+import type { DebugBoxes, DebugFrame } from '../debug/debugFrame'
 import type { InputState } from '../input/input'
 import { buildLevel } from '../level/levelRuntime'
 import type { LevelDefinition } from '../level/levelSchema'
@@ -32,7 +33,7 @@ import {
   worldToScreenY,
 } from '../render/camera'
 import { renderFrame } from '../render/renderer'
-import type { RenderContext } from '../render/scene'
+import type { RenderContext, VehicleRenderState } from '../render/scene'
 import { syncViewport } from '../render/viewport'
 import type { ScreenAction } from '../ui/screens'
 import { stepVehicle } from '../vehicle/physics'
@@ -366,6 +367,19 @@ function syncVehicleSettings(state: GameState): void {
   }
 }
 
+/**
+ * Every box in the level plus the car's own, posed where the frame is being
+ * drawn. Only built while the box overlay is on; the boxes themselves are
+ * handed over by reference, so nothing here can drift from what the physics is
+ * testing against.
+ */
+function collisionBoxes(state: GameState, render: VehicleRenderState): DebugBoxes | null {
+  const runtime = state.flow.runtime
+  if (runtime === null) return null
+  setObbPose(state.colliderView, render.x, render.y, render.yaw)
+  return { bodies: runtime.world.bodies, player: state.colliderView }
+}
+
 /** Feeds the camera the car's position, its velocity, and the bay to frame. */
 function updateFollowTarget(state: GameState): void {
   const { vehicle, followTarget } = state
@@ -409,7 +423,10 @@ function buildRenderContext(
   readout.parkReady = parkAvailable(current.vx)
   readout.stalled = state.powertrain.stalled
 
-  const debug: DebugFrame | null = state.ui.debugVisible
+  const runtime = state.flow.runtime
+  const boxes = state.ui.debug === 'caixas' ? collisionBoxes(state, render) : null
+
+  const debug: DebugFrame | null = state.ui.debug !== 'off'
     ? {
         telemetry: state.telemetry,
         vx: current.vx,
@@ -427,7 +444,7 @@ function buildRenderContext(
         audio: state.audio.readout,
         fuel: resolveFuel(state.ui.fuels, state.fuelId).label,
         run:
-          state.flow.runtime === null
+          runtime === null
             ? null
             : {
                 time: state.flow.run.time,
@@ -437,6 +454,7 @@ function buildRenderContext(
                 check: state.flow.run.parking.check,
                 hold: state.flow.run.parking.progress,
               },
+        boxes,
       }
     : null
 

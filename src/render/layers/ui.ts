@@ -26,7 +26,7 @@ import {
   type Rect,
   type TouchLayout,
 } from '../../ui/touchLayout'
-import { gateEngageable } from '../../ui/uiState'
+import { gateEngageable, type DebugMode } from '../../ui/uiState'
 import {
   autoSelectorAt,
   AUTO_SELECTORS,
@@ -144,7 +144,7 @@ function drawButtons(context: RenderContext, layout: TouchLayout): void {
   drawControlsGlyph(ctx, layout.controlsButton, ui.controlsVisible)
 
   drawButtonBox(ctx, layout.debugButton, ui.pressedButtons.has('debug'))
-  drawDebugGlyph(ctx, layout.debugButton)
+  drawDebugGlyph(ctx, layout.debugButton, ui.debug)
 
   drawButtonBox(ctx, layout.muteButton, ui.pressedButtons.has('mute'))
   drawMuteGlyph(ctx, layout.muteButton, ui.muted)
@@ -207,7 +207,7 @@ function drawControlsGlyph(ctx: CanvasRenderingContext2D, rect: Rect, visible: b
   ctx.stroke()
 }
 
-function drawDebugGlyph(ctx: CanvasRenderingContext2D, rect: Rect): void {
+function drawDebugGlyph(ctx: CanvasRenderingContext2D, rect: Rect, mode: DebugMode): void {
   const size = rect.height * 0.42
   ctx.font = `${size.toFixed(0)}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
   ctx.fillStyle = GLYPH
@@ -216,6 +216,14 @@ function drawDebugGlyph(ctx: CanvasRenderingContext2D, rect: Rect): void {
   ctx.fillText('0.0', rect.x + rect.width / 2, rect.y + rect.height / 2)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
+
+  // A rectangle round the numbers for the third position of the same control:
+  // the glyph says what the button is about to show, which is the boxes.
+  if (mode !== 'caixas') return
+  const inset = rect.width * 0.18
+  ctx.strokeStyle = GLYPH
+  ctx.lineWidth = Math.max(1, rect.height * 0.045)
+  ctx.strokeRect(rect.x + inset, rect.y + inset, rect.width - inset * 2, rect.height - inset * 2)
 }
 
 /** A speaker, with the sound crossed out when it is off. */

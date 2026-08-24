@@ -33,6 +33,25 @@ export type UiButton =
 export type MenuScreen = 'none' | 'main' | 'edit'
 
 /**
+ * How much the debug overlay is showing.
+ *
+ * "numeros" is the readout of the physics. "caixas" keeps the readout and adds
+ * every collision box, drawn over the artwork in world space -- which is the
+ * only way to see, rather than to argue about, whether the box a car is
+ * stopped by is the car the player is looking at.
+ */
+export type DebugMode = 'off' | 'numeros' | 'caixas'
+
+/** The order the one debug control walks through. */
+const DEBUG_MODES: readonly DebugMode[] = ['off', 'numeros', 'caixas']
+
+/** One press of the key or the button: on, on with boxes, off. */
+export function cycleDebugMode(ui: UiState): void {
+  const next = (DEBUG_MODES.indexOf(ui.debug) + 1) % DEBUG_MODES.length
+  ui.debug = DEBUG_MODES[next]
+}
+
+/**
  * The gear lever, as a position in the gate rather than a gear.
  *
  * It is the lever that is dragged and the gear that follows, never the other
@@ -65,7 +84,7 @@ export interface UiState {
   controlsVisible: boolean
   /** First-run instructions, dismissed by the first key or touch. */
   instructionsVisible: boolean
-  debugVisible: boolean
+  debug: DebugMode
   /** Sound switch. The audio layer reads it; nothing else does. */
   muted: boolean
   /** Master volume, 0..1. */
@@ -162,7 +181,7 @@ export function createUiState(options: UiStateOptions): UiState {
   return {
     controlsVisible: options.controlsVisible,
     instructionsVisible: true,
-    debugVisible: false,
+    debug: 'off',
     muted: false,
     volume: DEFAULT_VOLUME,
     fullscreenActive: false,

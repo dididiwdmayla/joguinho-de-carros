@@ -18,17 +18,17 @@
     "altura": 14.5
   },
   "spawn": { "x": 40.0, "y": 10.6, "angulo": 180 },
-  "vagaAlvo": { "x": 25.0, "y": 6.1, "angulo": 0, "comprimento": 6.8, "largura": 2.6, "tipo": "paralela" },
+  "vagaAlvo": { "x": 25.0, "y": 6.1, "angulo": 0, "comprimento": 5.65, "largura": 2.4, "tipo": "paralela" },
   "vagas": [
-    { "x": 18.9, "y": 6.1, "angulo": 0, "comprimento": 5.4, "largura": 2.6, "tipo": "paralela", "ocupante": "parked_van" },
-    { "x": 32.0, "y": 6.1, "angulo": 0, "comprimento": 5.7, "largura": 2.6, "tipo": "paralela", "ocupante": "parked_pickup" },
-    { "x": 12.6, "y": 6.1, "angulo": 0, "comprimento": 5.2, "largura": 2.6, "tipo": "paralela", "ocupante": "parked_hatch" },
-    { "x": 38.5, "y": 6.1, "angulo": 0, "comprimento": 5.2, "largura": 2.6, "tipo": "paralela", "ocupante": "parked_sedan" }
+    { "x": 19.6, "y": 6.1, "angulo": 0, "comprimento": 5.0, "largura": 2.4, "tipo": "paralela", "ocupante": "parked_van" },
+    { "x": 30.56, "y": 6.1, "angulo": 0, "comprimento": 5.3, "largura": 2.4, "tipo": "paralela", "ocupante": "parked_pickup" },
+    { "x": 14.84, "y": 6.1, "angulo": 0, "comprimento": 3.9, "largura": 2.4, "tipo": "paralela", "ocupante": "parked_hatch" },
+    { "x": 35.81, "y": 6.1, "angulo": 0, "comprimento": 4.6, "largura": 2.4, "tipo": "paralela", "ocupante": "parked_sedan" }
   ],
   "obstaculos": [
-    { "tipo": "cone", "x": 28.7, "y": 5.0, "angulo": 0 },
-    { "tipo": "cone", "x": 28.7, "y": 6.1, "angulo": 0 },
-    { "tipo": "cone", "x": 28.7, "y": 7.2, "angulo": 0 },
+    { "tipo": "cone", "x": 41.5, "y": 5.2, "angulo": 0 },
+    { "tipo": "cone", "x": 41.5, "y": 6.1, "angulo": 0 },
+    { "tipo": "cone", "x": 41.5, "y": 7.0, "angulo": 0 },
     { "tipo": "cone", "x": 6.6, "y": 15.9, "angulo": 0 },
     { "tipo": "barrier", "x": 6.0, "y": 16.5, "angulo": 0 },
     { "tipo": "curb_block", "x": 46.0, "y": 17.0, "angulo": -8 }
@@ -43,8 +43,8 @@
     "tempoAlvo": 95,
     "tempoLimite": 300,
     "danoLimite": 6,
-    "toleranciaCentro": 0.6,
-    "toleranciaAngulo": 10,
+    "toleranciaCentro": 0.5,
+    "toleranciaAngulo": 8,
     "velocidadeParado": 0.15,
     "tempoValidacao": 1.2,
     "pontuacao": {

@@ -80,6 +80,7 @@ function buildLines(frame: DebugFrame): string[] {
     row('st marcha', flag(p.stallInGear), 'fora N'),
     row('st morre', p.stallBelowRpm && p.stallRunning && p.stallEngaged && p.stallInGear ? 'SIM' : 'nao', ''),
     ...runLines(frame),
+    ...boxLines(frame),
     row('audio', frame.audio.state, ''),
     row('vol saida', frame.audio.masterGain.toFixed(2), ''),
     row('freq', frame.audio.fundamental.toFixed(0), 'Hz'),
@@ -109,6 +110,21 @@ function runLines(frame: DebugFrame): string[] {
     row('vg parado', flag(check.stopped), ''),
     row('vg travado', flag(check.secured), ''),
     row('vg espera', (run.hold * 100).toFixed(0), '%'),
+  ]
+}
+
+/**
+ * The size of the box being outlined, while the box mode is on. Two numbers,
+ * and they are the two the artwork has to agree with: read them off here and
+ * measure the car on screen against them.
+ */
+function boxLines(frame: DebugFrame): string[] {
+  const boxes = frame.boxes
+  if (boxes === null) return []
+  return [
+    row('cx compr', (boxes.player.halfLength * 2).toFixed(2), 'm'),
+    row('cx larg', (boxes.player.halfWidth * 2).toFixed(2), 'm'),
+    row('cx cena', String(boxes.bodies.length), ''),
   ]
 }
 

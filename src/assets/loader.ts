@@ -4,16 +4,34 @@
  * Every image is fetched by the path declared in the manifest, so the files
  * under public/assets/ keep their exact URLs in the published build.
  *
- * Sprites are also measured: the PNGs are authored with transparent padding
- * around the artwork, so the loader finds the opaque bounding box once and
- * stores it as the source rect. Drawing that rect at the declared metres is
- * what makes a 4.5 m car actually cover 4.5 m of world.
+ * Sprites are also measured, and the measurement is the reason this file
+ * exists. The PNGs are authored with transparent padding, and the artwork
+ * inside that padding has bits that stick out past the object itself -- wing
+ * mirrors, a barrier's feet. The metres in the manifest describe the object:
+ * a sedan is 4.5 m long and 1.8 m wide across the bodywork.
+ *
+ * So the loader finds two rectangles (see spriteBounds.ts) and works out, once,
+ * where the whole picture has to land for the bodywork inside it to come out at
+ * exactly those metres. That rectangle is `quad`, in metres about the sprite's
+ * centre, and drawing it is all any layer has to do. What follows is that the
+ * collision box built from the same manifest metres lands exactly on the
+ * bodywork the player can see.
  */
 import type { AssetManifest, SpriteBlend } from './manifest'
+import { measureSpriteBounds, type PixelBox, type SpriteBounds } from './spriteBounds'
 
 /** Source rectangle inside the image, in image pixels. */
-export interface SpriteTrim {
+export type SpriteTrim = PixelBox
+
+/**
+ * Where a sprite's source rectangle lands, in metres, relative to the centre
+ * it is drawn about. Not centred on the origin in general: it is the bodywork
+ * that is centred, and the mirrors hang off whichever side they are on.
+ */
+export interface SpriteQuad {
+  /** Left edge, relative to the sprite's centre [m]. */
   readonly x: number
+  /** Top edge, relative to the sprite's centre [m]. */
   readonly y: number
   readonly width: number
   readonly height: number
@@ -22,11 +40,14 @@ export interface SpriteTrim {
 export interface LoadedSprite {
   readonly key: string
   readonly image: HTMLImageElement
-  /** Extent along the sprite's +X axis [m]. */
+  /** Extent of the bodywork along the sprite's +X axis [m]. */
   readonly lengthMeters: number
-  /** Extent along the sprite's +Y axis [m]. */
+  /** Extent of the bodywork along the sprite's +Y axis [m]. */
   readonly widthMeters: number
+  /** Everything that is not padding: what gets blitted. */
   readonly trim: SpriteTrim
+  /** Where `trim` lands, in metres about the centre of the bodywork. */
+  readonly quad: SpriteQuad
   /** How it is laid onto the canvas; see the manifest. */
   readonly blend: SpriteBlend
 }
@@ -42,9 +63,6 @@ export interface AssetStore {
   sprite(key: string): LoadedSprite
   ui(key: string): LoadedUiImage
 }
-
-/** Alpha below this counts as empty padding (kills soft halos around art). */
-const ALPHA_THRESHOLD = 8
 
 /** An image that never fires load or error would hang the boot forever. */
 const IMAGE_TIMEOUT_MS = 10_000
@@ -88,56 +106,56 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Opaque bounding box of an image. Scans inward from each edge so fully
- * opaque textures (the ground tiles) bail out after a single row/column.
+ * Pulls the pixels out of an image and measures them. Losing the measurement
+ * only makes the sprite sit inside its own padding; it must never take the
+ * whole boot down with it.
  */
-function measureTrim(image: HTMLImageElement): SpriteTrim {
+function measureImage(image: HTMLImageElement): SpriteBounds {
   const width = image.naturalWidth
   const height = image.naturalHeight
-  const full: SpriteTrim = { x: 0, y: 0, width, height }
-  if (width === 0 || height === 0) return full
+  const whole: PixelBox = { x: 0, y: 0, width, height }
+  if (width === 0 || height === 0) return { trim: whole, body: whole }
 
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
-  if (ctx === null) return full
+  if (ctx === null) return { trim: whole, body: whole }
   ctx.drawImage(image, 0, 0)
 
-  let data: Uint8ClampedArray
   try {
-    data = ctx.getImageData(0, 0, width, height).data
+    return measureSpriteBounds(ctx.getImageData(0, 0, width, height).data, width, height)
   } catch (error: unknown) {
-    // Losing the trim only makes the sprite sit inside its padding; it must
-    // never take the whole boot down with it.
     console.warn(`Nao foi possivel medir o recorte de ${image.src}`, error)
-    return full
+    return { trim: whole, body: whole }
   }
-  const alphaAt = (x: number, y: number): number => data[(y * width + x) * 4 + 3] ?? 0
+}
 
-  const rowHasInk = (y: number): boolean => {
-    for (let x = 0; x < width; x++) if (alphaAt(x, y) > ALPHA_THRESHOLD) return true
-    return false
+/**
+ * Where the trimmed picture lands so that the bodywork inside it comes out at
+ * the declared metres, centred on the origin.
+ *
+ * The two axes get their own scale. That is deliberate: the manifest is the
+ * authority on how big a car is, and art whose proportions disagree with it by
+ * a few per cent is stretched to obey rather than allowed to quietly hand the
+ * physics a different car from the one on screen.
+ */
+export function spriteQuad(
+  bounds: SpriteBounds,
+  lengthMeters: number,
+  widthMeters: number,
+): SpriteQuad {
+  const { trim, body } = bounds
+  const metersPerPixelX = body.width > 0 ? lengthMeters / body.width : 0
+  const metersPerPixelY = body.height > 0 ? widthMeters / body.height : 0
+  const centerX = body.x + body.width / 2
+  const centerY = body.y + body.height / 2
+  return {
+    x: (trim.x - centerX) * metersPerPixelX,
+    y: (trim.y - centerY) * metersPerPixelY,
+    width: trim.width * metersPerPixelX,
+    height: trim.height * metersPerPixelY,
   }
-  const columnHasInk = (x: number, top: number, bottom: number): boolean => {
-    for (let y = top; y <= bottom; y++) if (alphaAt(x, y) > ALPHA_THRESHOLD) return true
-    return false
-  }
-
-  let top = 0
-  while (top < height && !rowHasInk(top)) top++
-  if (top === height) return full // fully transparent: keep the whole frame
-
-  let bottom = height - 1
-  while (bottom > top && !rowHasInk(bottom)) bottom--
-
-  let left = 0
-  while (left < width && !columnHasInk(left, top, bottom)) left++
-
-  let right = width - 1
-  while (right > left && !columnHasInk(right, top, bottom)) right--
-
-  return { x: left, y: top, width: right - left + 1, height: bottom - top + 1 }
 }
 
 /**
@@ -158,12 +176,14 @@ export async function loadAssets(
       const entry = manifest.sprites[key]
       if (entry === undefined) throw new Error(`Sprite "${key}" nao existe no manifesto`)
       const image = await loadImage(assetUrl(entry.path))
+      const bounds = measureImage(image)
       sprites.set(key, {
         key,
         image,
         lengthMeters: entry.lengthMeters,
         widthMeters: entry.widthMeters,
-        trim: measureTrim(image),
+        trim: bounds.trim,
+        quad: spriteQuad(bounds, entry.lengthMeters, entry.widthMeters),
         blend: entry.blend,
       })
     }),
@@ -171,7 +191,7 @@ export async function loadAssets(
       const entry = manifest.ui[key]
       if (entry === undefined) throw new Error(`Imagem de UI "${key}" nao existe no manifesto`)
       const image = await loadImage(assetUrl(entry.path))
-      ui.set(key, { key, image, trim: measureTrim(image) })
+      ui.set(key, { key, image, trim: measureImage(image).trim })
     }),
   ])
 
