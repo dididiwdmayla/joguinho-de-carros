@@ -408,7 +408,7 @@ export function steeringWheelDiameter(layout: TouchLayout): number {
 export const STEERING_WHEEL_KEY = 'steering_wheel'
 
 /** Plate width ceiling, in layout units, so a big screen stays sensible. */
-const MAX_PLATE_WIDTH_UNITS = 7
+const MAX_PLATE_WIDTH_UNITS = 5
 
 /**
  * The largest plate of `aspect` that fits the horizontal span `from`..`to`

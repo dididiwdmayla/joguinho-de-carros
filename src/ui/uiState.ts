@@ -1,8 +1,9 @@
 /** Screen-layer state: what is on show and what is being pressed right now. */
 import { DEFAULT_VOLUME } from '../audio/engineAudio'
+import { smoothingFactor } from '../core/math'
 import type { FuelCatalog } from '../vehicle/fuel'
 import { CLUTCH_ENGAGE_LIMIT, NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
-import type { ControlConfig, ControlSlot } from './controlLayout'
+import { OPACITY_SLOTS, type ControlConfig, type ControlSlot, type OpacitySlot } from './controlLayout'
 import { gearSeat, neutralColumn, type ShifterPattern } from './shifterPattern'
 import type { VehicleSettings } from './vehicleSettings'
 
@@ -83,6 +84,19 @@ export interface UiState {
   /** How many forward gears the gate has to lay out. */
   forwardGears: number
 
+  /**
+   * Which drawn controls have a live pointer on them right now. Mutated in
+   * place by the input layer every frame, never a latch: a control left
+   * holding itself down is not a finger the player can see on it.
+   */
+  readonly activeControls: Set<OpacitySlot>
+  /**
+   * Opacity actually drawn for each control this frame: eased every frame
+   * towards 1 while it is active, or towards the configured value otherwise,
+   * so a finger lifting off a control fades rather than snaps.
+   */
+  readonly controlOpacity: Record<OpacitySlot, number>
+
   /** Settings, or the control editor, or neither. */
   menu: MenuScreen
   /**
@@ -153,6 +167,8 @@ export function createUiState(options: UiStateOptions): UiState {
     },
     gatePattern,
     forwardGears,
+    activeControls: new Set<OpacitySlot>(),
+    controlOpacity: initialControlOpacity(controls.controlsOpacity),
     menu: 'none',
     controls,
     vehicle,
@@ -186,6 +202,39 @@ export function syncShifterToGear(ui: UiState): void {
  */
 export function gateEngageable(ui: Readonly<UiState>): boolean {
   return ui.mode !== 'manual' || ui.clutchPedal <= CLUTCH_ENGAGE_LIMIT
+}
+
+function initialControlOpacity(configured: number): Record<OpacitySlot, number> {
+  const opacity = {} as Record<OpacitySlot, number>
+  for (const slot of OPACITY_SLOTS) opacity[slot] = configured
+  return opacity
+}
+
+/**
+ * How fast a control's drawn opacity chases its target [1/s]. High enough
+ * that a touch reads as instant and a release fades in well under a quarter
+ * second, never so high that it is indistinguishable from a snap.
+ */
+const OPACITY_CHASE_RATE = 18
+/** Once this close, snap rather than keep nudging a value nobody can see move. */
+const OPACITY_SETTLED = 0.002
+
+/**
+ * Eases every control's drawn opacity towards where it belongs this frame: 1
+ * while a finger is on it, the configured level otherwise. Called once a
+ * frame with real elapsed time, so the fade back after letting go takes the
+ * same instant regardless of the display's refresh rate.
+ */
+export function updateControlOpacity(ui: UiState, dt: number): void {
+  const configured = ui.controls.controlsOpacity
+  const rate = smoothingFactor(OPACITY_CHASE_RATE, dt)
+  for (const slot of OPACITY_SLOTS) {
+    const target = ui.activeControls.has(slot) ? 1 : configured
+    const current = ui.controlOpacity[slot]
+    ui.controlOpacity[slot] = Math.abs(target - current) <= OPACITY_SETTLED
+      ? target
+      : current + (target - current) * rate
+  }
 }
 
 /**

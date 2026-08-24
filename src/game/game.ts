@@ -21,7 +21,7 @@ import { syncViewport } from '../render/viewport'
 import { stepVehicle } from '../vehicle/physics'
 import { applyPowertrainCommand, transmissionModeLabel } from '../vehicle/powertrain'
 import { copyVehicleState } from '../vehicle/vehicleState'
-import { syncShifterToGear } from '../ui/uiState'
+import { syncShifterToGear, updateControlOpacity } from '../ui/uiState'
 import { saveVehicleSettings } from '../ui/vehicleSettings'
 import { resolveFuel } from '../vehicle/fuel'
 import { applySelectedFuel, type GameState } from './state'
@@ -92,6 +92,11 @@ function advanceFrame(state: GameState, timestamp: number): void {
 
   // Input is sampled once per frame and reused by every step of that frame.
   const input = state.input.sample()
+
+  // Chases each control's drawn opacity towards 1 while it is being touched
+  // and back towards the configured level once it is not, in real seconds so
+  // the fade takes the same time at any frame rate.
+  updateControlOpacity(state.ui, elapsed)
 
   syncVehicleSettings(state)
 
