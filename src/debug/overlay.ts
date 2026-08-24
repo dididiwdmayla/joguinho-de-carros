@@ -49,6 +49,10 @@ function buildLines(frame: DebugFrame): string[] {
     row('blend t', t.blend.toFixed(3), ''),
     row('ax', t.longitudinalAcceleration.toFixed(2), 'm/s2'),
     row('Fx tot', t.longitudinalForce.toFixed(0), 'N'),
+    // Energy audit: with nothing driving the car this may only fall, so a
+    // positive dE/dt with the throttle shut is the model creating energy.
+    row('energia', t.kineticEnergy.toFixed(0), 'J'),
+    row('dE/dt', t.kineticEnergyRate.toFixed(0), 'W'),
     row('rpm', engine, ''),
     row('marcha', gearLabel(p.gear), ''),
     row('cambio', transmissionModeLabel(p.mode), ''),

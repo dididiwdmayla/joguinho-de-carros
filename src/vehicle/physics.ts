@@ -47,6 +47,15 @@ export interface VehicleTelemetry {
   longitudinalAcceleration: number
   /** Total longitudinal force of this step [N]. */
   longitudinalForce: number
+  /**
+   * Kinetic energy of the chassis [J], the sliding and the spinning together:
+   * m*v^2/2 + Iz*r^2/2. Nothing in the model reads it -- it is the audit. With
+   * the powertrain not driving, every force on the car is dissipative, so this
+   * number may only ever fall; if it climbs, the model is making energy.
+   */
+  kineticEnergy: number
+  /** How fast that energy is changing [W]. Positive without drive is a bug. */
+  kineticEnergyRate: number
   /** Engine, clutch and gearbox readouts. */
   readonly powertrain: PowertrainTelemetry
 }
@@ -63,8 +72,17 @@ export function createTelemetry(powertrain: PowertrainState): VehicleTelemetry {
     blend: 0,
     longitudinalAcceleration: 0,
     longitudinalForce: 0,
+    kineticEnergy: 0,
+    kineticEnergyRate: 0,
     powertrain: createPowertrainTelemetry(powertrain.mode),
   }
+}
+
+/** Chassis kinetic energy [J]: the body sliding, plus the body spinning. */
+function kineticEnergy(state: VehicleState, params: CarParams): number {
+  const translation = 0.5 * params.mass * (state.vx * state.vx + state.vy * state.vy)
+  const rotation = 0.5 * params.yawInertia * state.yawRate * state.yawRate
+  return translation + rotation
 }
 
 /**
@@ -79,6 +97,8 @@ export function stepVehicle(
   dt: number,
   telemetry: VehicleTelemetry,
 ): void {
+  const energyBefore = kineticEnergy(state, params)
+
   const a = params.cgToFront // CG -> front axle [m]
   const b = params.cgToRear // CG -> rear axle [m]
   const L = params.axleSpan // wheelbase, a + b [m]
@@ -110,7 +130,16 @@ export function stepVehicle(
   const slipFront = Math.atan2(state.vy + a * state.yawRate, forwardSpeed) - state.steer * travelSign
   const slipRear = Math.atan2(state.vy - b * state.yawRate, forwardSpeed)
 
-  // --- 3. Lateral tyre forces ---------------------------------------------
+  // --- 3. How much of the tyre model this speed is worth believing ---------
+  // The linear slip formulation divides by forward speed, so at walking pace
+  // its forces stop meaning anything. Below the blend speed they are faded out
+  // and the kinematic car at the bottom of this function takes over. Every
+  // force the tyres make from here down carries this factor, one way or
+  // another.
+  const speed = Math.hypot(state.vx, state.vy)
+  const blend = clamp(speed / LOW_SPEED_BLEND_SPEED, 0, 1)
+
+  // --- 4. Lateral tyre forces ---------------------------------------------
   // Linear in slip angle (stiffness C) until the friction circle runs out:
   // an axle can never produce more grip than mu times the load on it.
   const gripFront = params.mu * loadFront // [N]
@@ -118,7 +147,28 @@ export function stepVehicle(
   const lateralFront = -clamp(params.corneringStiffnessFront * slipFront, -gripFront, gripFront)
   const lateralRear = -clamp(params.corneringStiffnessRear * slipRear, -gripRear, gripRear)
 
-  // --- 4. Longitudinal force ----------------------------------------------
+  // Each of those forces is perpendicular to its own wheel, not to the car.
+  // The rear wheel points along the nose, so its force is already body +y; the
+  // front one is turned by `steer`, and resolving it onto the body axes leaves
+  // a component pointing back along the nose.
+  //
+  // That component is the drift drag: the price of asking a tyre to travel at
+  // an angle to the way it is pointing, and the reason steering a real car in
+  // neutral slows it down. Leaving it out does not merely lose some drag --
+  // what is left of the lateral force then does net positive work on the body,
+  // and the car gains speed with nothing driving it.
+  //
+  // The blend is on it because it is on the other two components already: the
+  // lateral force and the yaw moment only reach the car through the lerps at
+  // the end of this function, and one component of a force that outlived the
+  // other two would be free energy -- the tyre would push the car along its
+  // nose without anything paying for it sideways.
+  const cosSteer = Math.cos(state.steer)
+  const sinSteer = Math.sin(state.steer)
+  const lateralTotal = lateralFront * cosSteer + lateralRear // body +y [N]
+  const driftDrag = -lateralFront * sinSteer * blend // body +x [N]
+
+  // --- 5. Longitudinal force ----------------------------------------------
   // Until the rear axle gets a proper lock model, the handbrake is simply a
   // full brake application.
   const brake = Math.max(clamp(input.brake, 0, 1), input.handbrake ? 1 : 0)
@@ -128,7 +178,8 @@ export function stepVehicle(
   const resistForce =
     -travelSign * brake * params.maxBrakeForce - // brakes oppose travel
     params.dragCoefficient * state.vx * forwardSpeed - // aero drag ~ v^2
-    params.rollingResistance * state.vx // rolling resistance ~ v
+    params.rollingResistance * state.vx + // rolling resistance ~ v
+    driftDrag // the front tyre dragging against its own slip
 
   // Drive comes out of the engine, through the clutch, the gear and the
   // differential, and is capped by the grip the driven axle actually has.
@@ -144,48 +195,61 @@ export function stepVehicle(
   const longitudinalForce = driveForce + resistForce
   const ax = longitudinalForce / params.mass
 
-  // --- 5. Integrate in the body frame -------------------------------------
-  // A rotating frame adds Coriolis terms: the velocity vector is carried
-  // around by the yaw rate even when no force acts on it.
-  //   dvx/dt = Fx/m + r*vy
-  //   dvy/dt = Fy/m - r*vx
-  let vx = state.vx + dt * (ax + state.vy * state.yawRate)
+  // --- 6. Integrate in the body frame -------------------------------------
+  // Two different things happen to the velocity vector over one step: the
+  // forces change it, and the body frame it is written in turns underneath it.
+  // They are applied in that order, one after the other.
+
+  // Forces first, with the frame held still.
+  let vxForce = state.vx + dt * ax
   // The brakes stop the car, they never reverse it: if the velocity would
   // cross zero while braking, it lands on zero instead.
-  if (brake > 0 && travelSign !== 0 && vx * travelSign <= 0) vx = 0
+  if (brake > 0 && travelSign !== 0 && vxForce * travelSign <= 0) vxForce = 0
+  const vyForce = state.vy + dt * (lateralTotal / params.mass)
 
-  // Longitudinal acceleration actually realised this step, a_x = dvx/dt - r*vy,
-  // evaluated on the pre-step velocity. Equals Fx/m unless the clamp above
-  // truncated the step, so the weight transfer of the next step is never fed a
-  // deceleration the car did not really experience.
-  const realisedAx = (vx - state.vx) / dt - state.vy * state.yawRate
+  // Longitudinal acceleration actually realised this step. Equals Fx/m unless
+  // the clamp above truncated the step, so the weight transfer of the next
+  // step is never fed a deceleration the car did not really experience.
+  const realisedAx = (vxForce - state.vx) / dt
 
-  const lateralTotal = lateralFront + lateralRear
-  const vyDynamic = state.vy + dt * (lateralTotal / params.mass - state.vx * state.yawRate)
-
-  // Yaw acceleration from the moment of the two axle forces about the CG.
-  const yawMoment = a * lateralFront - b * lateralRear // [N*m]
+  // Yaw acceleration from the moment of the two axle forces about the CG. The
+  // front force enters with the same cosine as above: it is one single vector,
+  // and a moment taken from a different one than the force itself would be the
+  // moment of nothing.
+  const yawMoment = a * lateralFront * cosSteer - b * lateralRear // [N*m]
   const yawRateDynamic = state.yawRate + dt * (yawMoment / params.yawInertia)
 
   // --- Low-speed blend ----------------------------------------------------
   // Kinematic car: the wheels roll without sliding, so the rear simply
   // follows the front and the body has no lateral velocity of its own.
   // vx carries the sign so that reversing steers the way it should.
-  const speed = Math.hypot(state.vx, state.vy)
-  const blend = clamp(speed / LOW_SPEED_BLEND_SPEED, 0, 1)
   const yawRateKinematic = (state.vx * Math.tan(state.steer)) / L
   const vyKinematic = 0
 
-  state.vx = vx
-  state.vy = lerp(vyKinematic, vyDynamic, blend)
-  state.yawRate = lerp(yawRateKinematic, yawRateDynamic, blend)
-
   // At a standstill both branches are zero, so a steered wheel on a parked
   // car moves nothing and rotates nothing.
+  state.yawRate = lerp(yawRateKinematic, yawRateDynamic, blend)
+
+  // Then the frame. Over the step the body turns by yawRate*dt, and a velocity
+  // vector that no force is acting on any more is simply carried around with
+  // it: written in the new frame, it is the old vector rotated backwards by
+  // that angle. This is the Coriolis coupling between the two axes, and taking
+  // it as the rotation it actually is -- instead of as the first term of that
+  // rotation's series, +r*vy and -r*vx -- is what leaves its length exactly
+  // untouched. The linearised form is a shear of determinant 1 + (r*dt)^2, and
+  // it inflates the speed by that much on every step the car is turning.
+  const yawStep = state.yawRate * dt
+  const cosStep = Math.cos(yawStep)
+  const sinStep = Math.sin(yawStep)
+  const vxDynamic = vxForce * cosStep + vyForce * sinStep
+  const vyDynamic = vyForce * cosStep - vxForce * sinStep
+
+  state.vx = vxDynamic
+  state.vy = lerp(vyKinematic, vyDynamic, blend)
 
   state.ax = realisedAx
 
-  state.yaw = wrapAngle(state.yaw + state.yawRate * dt)
+  state.yaw = wrapAngle(state.yaw + yawStep)
 
   // Body velocity -> world velocity.
   const cosYaw = Math.cos(state.yaw)
@@ -203,4 +267,6 @@ export function stepVehicle(
   telemetry.blend = blend
   telemetry.longitudinalAcceleration = state.ax
   telemetry.longitudinalForce = longitudinalForce
+  telemetry.kineticEnergy = kineticEnergy(state, params)
+  telemetry.kineticEnergyRate = (telemetry.kineticEnergy - energyBefore) / dt
 }
