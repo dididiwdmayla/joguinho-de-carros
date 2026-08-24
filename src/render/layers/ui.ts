@@ -3,18 +3,25 @@
  *
  * The on-screen controls live here, laid out by the same module the input
  * layer hit tests against, so what is drawn and what responds can never drift
- * apart. Everything is drawn in code -- no images, nothing persisted.
+ * apart. Everything is drawn in code except the gearbox, which is two art
+ * layers positioned by that same geometry -- nothing is ever persisted.
  */
 import { clamp } from '../../core/math'
 import { drawDebugOverlay } from '../../debug/overlay'
 import {
+  columnToX,
   computeTouchLayout,
+  GATE_DEAD_SLOT,
   gateGear,
+  type GateGeometry,
   gateGeometry,
+  GEAR_GATE_KEY,
+  GEAR_KNOB_KEY,
   steeringKnobDiameter,
   type Rect,
   type TouchLayout,
 } from '../../ui/touchLayout'
+import type { UiState } from '../../ui/uiState'
 import {
   CLUTCH_BITE_END,
   CLUTCH_BITE_START,
@@ -326,15 +333,16 @@ function drawGearbox(context: RenderContext, layout: TouchLayout): void {
 }
 
 /**
- * The H gate: slots cut into a plate, with the lever sitting wherever the
- * drag left it. The slots are drawn as the path the lever may take, which is
- * also exactly the path the input layer allows.
+ * The H gate: a fixed piece of art, with the lever drawn on top of it
+ * wherever the drag left it. The channels are cut into the art; which of
+ * them is reachable is still decided entirely by the geometry in
+ * touchLayout.ts, calibrated to sit exactly over the art's own grooves.
  */
 function drawGate(context: RenderContext, layout: TouchLayout): void {
-  const { ctx, ui } = context
+  const { ctx, ui, assets } = context
   const { gate } = layout
   const geometry = gateGeometry(layout, ui.forwardGears)
-  const slot = Math.max(6, geometry.knobRadius * 0.85)
+  const { art } = geometry
 
   ctx.fillStyle = PANEL_FILL
   ctx.strokeStyle = PANEL_STROKE
@@ -343,59 +351,90 @@ function drawGate(context: RenderContext, layout: TouchLayout): void {
   ctx.fill()
   ctx.stroke()
 
-  // The corridor, then a lane wherever there is a gear to reach.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.30)'
-  const firstX = geometry.firstColumnX
-  const lastX = geometry.firstColumnX + (geometry.columns - 1) * geometry.columnSpacing
-  roundedRectPath(ctx, firstX - slot, geometry.corridorY - slot, lastX - firstX + slot * 2, slot * 2, slot)
-  ctx.fill()
-  for (let column = 0; column < geometry.columns; column++) {
-    const x = geometry.firstColumnX + column * geometry.columnSpacing
-    for (const side of [-1, 1]) {
-      if (gateGear(column, side, ui.forwardGears) === null) continue
-      const top = side < 0 ? geometry.corridorY - geometry.laneReach : geometry.corridorY
-      roundedRectPath(ctx, x - slot, top - slot, slot * 2, geometry.laneReach + slot * 2, slot)
-      ctx.fill()
-    }
-  }
+  const plate = assets.ui(GEAR_GATE_KEY)
+  ctx.drawImage(
+    plate.image,
+    plate.trim.x,
+    plate.trim.y,
+    plate.trim.width,
+    plate.trim.height,
+    art.x,
+    art.y,
+    art.width,
+    art.height,
+  )
 
-  // Gear numbers at the end of each lane, and N over the corridor.
-  const labelSize = Math.max(9, geometry.knobRadius * 0.95)
+  // The fourth column's upper channel is routed like the rest, but nothing
+  // ever seats there -- reverse is the bottom of that column. Darkened so it
+  // never reads as a live position.
+  const dead = GATE_DEAD_SLOT
+  ctx.fillStyle = 'rgba(5, 7, 10, 0.6)'
+  roundedRectPath(
+    ctx,
+    art.x + (dead.centerXFrac - dead.halfWidthFrac) * art.width,
+    art.y + dead.topFrac * art.height,
+    dead.halfWidthFrac * 2 * art.width,
+    (dead.bottomFrac - dead.topFrac) * art.height,
+    dead.halfWidthFrac * art.width * 0.7,
+  )
+  ctx.fill()
+
+  drawGateLabels(ctx, geometry, ui)
+  drawShifterKnob(context, geometry)
+}
+
+/** Gear numbers above and below the art, aligned to the channel each seats. */
+function drawGateLabels(ctx: CanvasRenderingContext2D, geometry: GateGeometry, ui: UiState): void {
+  const labelSize = Math.max(10, geometry.art.width * 0.1)
   ctx.font = `600 ${labelSize.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   for (let column = 0; column < geometry.columns; column++) {
-    const x = geometry.firstColumnX + column * geometry.columnSpacing
-    for (const side of [-1, 1]) {
+    const x = geometry.columnX[column]
+    for (const side of [-1, 1] as const) {
       const gear = gateGear(column, side, ui.forwardGears)
       if (gear === null) continue
       ctx.fillStyle = gear === ui.gear ? '#9ecbff' : GLYPH
-      ctx.fillText(
-        gearLabel(gear),
-        x,
-        geometry.corridorY + side * (geometry.laneReach + geometry.knobRadius * 1.15),
-      )
+      ctx.fillText(gearLabel(gear), x, side < 0 ? geometry.labelTopY : geometry.labelBottomY)
     }
   }
-  ctx.fillStyle = ui.gear === NEUTRAL_GEAR ? '#9ecbff' : 'rgba(226, 236, 245, 0.5)'
-  ctx.fillText('N', lastX + geometry.columnSpacing * 0.42, geometry.corridorY)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
+}
 
-  // The lever itself.
-  const knobX = geometry.firstColumnX + ui.shifter.column * geometry.columnSpacing
-  const knobY = geometry.corridorY + ui.shifter.lane * geometry.laneReach
-  ctx.beginPath()
-  ctx.arc(knobX, knobY, geometry.knobRadius, 0, Math.PI * 2)
-  ctx.fillStyle = ui.shifter.blocked
-    ? 'rgba(226, 120, 110, 0.85)'
-    : ui.shifter.dragging
-      ? 'rgba(150, 200, 255, 0.9)'
-      : 'rgba(220, 232, 244, 0.72)'
-  ctx.fill()
-  ctx.strokeStyle = PANEL_STROKE
-  ctx.lineWidth = 1.5
-  ctx.stroke()
+/**
+ * The lever itself: a knob image following the finger, seated wherever the
+ * drag left it. A ring behind it stands in for the old fill colour -- red
+ * when the gate is refusing the gear and the knob has stopped at the
+ * entrance, blue while it is simply being dragged.
+ */
+function drawShifterKnob(context: RenderContext, geometry: GateGeometry): void {
+  const { ctx, ui, assets } = context
+  const knob = assets.ui(GEAR_KNOB_KEY)
+  const x = columnToX(geometry, ui.shifter.column)
+  const y = geometry.corridorY + ui.shifter.lane * geometry.laneReach
+  const diameter = geometry.knobDiameter
+  const radius = diameter / 2
+
+  if (ui.shifter.blocked || ui.shifter.dragging) {
+    ctx.beginPath()
+    ctx.arc(x, y, radius * 1.12, 0, Math.PI * 2)
+    ctx.strokeStyle = ui.shifter.blocked ? 'rgba(226, 100, 90, 0.9)' : 'rgba(150, 200, 255, 0.55)'
+    ctx.lineWidth = Math.max(2, diameter * 0.05)
+    ctx.stroke()
+  }
+
+  ctx.drawImage(
+    knob.image,
+    knob.trim.x,
+    knob.trim.y,
+    knob.trim.width,
+    knob.trim.height,
+    x - radius,
+    y - radius,
+    diameter,
+    diameter,
+  )
 }
 
 /** Master volume: a bar that fills to wherever the finger last left it. */

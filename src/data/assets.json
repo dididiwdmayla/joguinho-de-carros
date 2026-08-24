@@ -17,6 +17,8 @@
     "concrete_tile": { "path": "assets/ground/concrete_tile.png",  "lengthMeters": 16,  "widthMeters": 16 }
   },
   "ui": {
-    "dashboard": { "path": "assets/ui/dashboard.png" }
+    "dashboard": { "path": "assets/ui/dashboard.png" },
+    "gear_gate": { "path": "assets/ui/gear_gate.png" },
+    "gear_knob": { "path": "assets/ui/gear_knob.png" }
   }
 }
