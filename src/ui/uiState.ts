@@ -1,9 +1,11 @@
 /** Screen-layer state: what is on show and what is being pressed right now. */
 import { DEFAULT_VOLUME } from '../audio/engineAudio'
 import { NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
+import type { ControlConfig, ControlSlot } from './controlLayout'
 import { gearGatePosition } from './touchLayout'
 
 export type UiButton =
+  | 'menu'
   | 'controls'
   | 'fullscreen'
   | 'debug'
@@ -14,6 +16,13 @@ export type UiButton =
   | 'mute'
   | 'sequentialUp'
   | 'sequentialDown'
+
+/**
+ * Which screen is in front of the game, if any. The editor is a screen rather
+ * than a flag because everything changes inside it: the controls stop driving
+ * the car and start being furniture to be pushed around.
+ */
+export type MenuScreen = 'none' | 'main' | 'edit'
 
 /**
  * The gear lever, as a position in the gate rather than a gear.
@@ -69,6 +78,23 @@ export interface UiState {
   /** How many forward gears the gate has to lay out. */
   forwardGears: number
 
+  /** Settings, or the control editor, or neither. */
+  menu: MenuScreen
+  /**
+   * The player's own control layout. Mutated in place by the editor and
+   * written to localStorage on every change, so a phone that is closed
+   * mid-session still opens where it left off.
+   */
+  readonly controls: ControlConfig
+  /** Control being edited, null while nothing is selected. */
+  editing: ControlSlot | null
+  /**
+   * Controls left holding themselves down, and at what value. This is what
+   * buys the third finger: a clutch latched on the floor stays there while
+   * both thumbs go and find a gear.
+   */
+  readonly latched: Map<ControlSlot, number>
+
   // Mirrored from the powertrain once per frame, so the input layer can lay
   // out the gearbox and refuse a gear without reaching into the simulation.
   mode: TransmissionMode
@@ -81,6 +107,7 @@ export function createUiState(
   controlsVisible: boolean,
   mode: TransmissionMode,
   forwardGears: number,
+  controls: ControlConfig,
 ): UiState {
   return {
     controlsVisible,
@@ -102,6 +129,10 @@ export function createUiState(
       requested: NEUTRAL_GEAR,
     },
     forwardGears,
+    menu: 'none',
+    controls,
+    editing: null,
+    latched: new Map<ControlSlot, number>(),
     mode,
     gear: NEUTRAL_GEAR,
     clutchPedal: 1,

@@ -6,13 +6,23 @@
  * same place. Everything is laid out inside the device's safe area, so the
  * notch and the gesture bar never sit on top of a control.
  *
- * The seat is laid out the way a car is: steering under the left thumb, the
- * clutch on the left edge just above it so both work at once, the pedals under
- * the right thumb, and the gearbox in the middle between them.
+ * The built-in seat is laid out the way a car is: steering under the left
+ * thumb, the clutch on the left edge just above it so both work at once, the
+ * pedals under the right thumb, and the gearbox in the middle between them.
+ * That is only where the controls start, though -- the player's own layout is
+ * applied on top of it here, so nothing downstream has to know whether a
+ * control is where the game put it or where its owner did.
  */
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
 import { NEUTRAL_GEAR, REVERSE_GEAR } from '../vehicle/powertrain'
+import {
+  CONTROL_SLOTS,
+  MAX_CONTROL_SCALE,
+  MIN_CONTROL_SCALE,
+  type ControlConfig,
+  type ControlSlot,
+} from './controlLayout'
 
 export interface Rect {
   x: number
@@ -21,10 +31,25 @@ export interface Rect {
   height: number
 }
 
+/** Rect of every movable control, before or after the player's own layout. */
+export type SlotRects = Record<ControlSlot, Rect>
+
 export interface TouchLayout {
   /** Base size the whole layout is derived from. */
   unit: number
-  /** Horizontal steering bar, bottom left. */
+  /** Spacing the built-in layout separates controls by. */
+  gap: number
+
+  /**
+   * Every movable control, keyed by slot. The named fields below are the same
+   * rects under the names the rest of the game already uses; this is the one
+   * the editor walks.
+   */
+  readonly slots: Readonly<SlotRects>
+  readonly hidden: Readonly<Record<ControlSlot, boolean>>
+  readonly latch: Readonly<Record<ControlSlot, boolean>>
+
+  /** Steering: a horizontal bar, or a wheel turned by dragging round it. */
   steering: Rect
   /** Generous grab area around the steering bar. */
   steeringGrab: Rect
@@ -45,12 +70,13 @@ export interface TouchLayout {
   gearDisplay: Rect
   reverse: Rect
   neutral: Rect
-  /** Transmission mode selector and starter, above the gearbox. */
+  /** Transmission mode selector and starter. */
   mode: Rect
   ignition: Rect
-  /** Master volume, left of the top-right buttons. */
+  /** Master volume. */
   volume: Rect
-  /** Top-right buttons, right to left. */
+  /** Top-right buttons, right to left. Fixed: they are how the menu is reached. */
+  menuButton: Rect
   controlsButton: Rect
   debugButton: Rect
   muteButton: Rect
@@ -59,6 +85,14 @@ export interface TouchLayout {
 
 export function containsPoint(rect: Rect, x: number, y: number): boolean {
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
+}
+
+export function rectCenterX(rect: Rect): number {
+  return rect.x + rect.width / 2
+}
+
+export function rectCenterY(rect: Rect): number {
+  return rect.y + rect.height / 2
 }
 
 function inflate(rect: Rect, amountX: number, amountY: number): Rect {
@@ -70,34 +104,49 @@ function inflate(rect: Rect, amountX: number, amountY: number): Rect {
   }
 }
 
-export function computeTouchLayout(viewport: Viewport): TouchLayout {
-  const { cssWidth: width, cssHeight: height, safeArea } = viewport
+/**
+ * The layout the game would use if nobody had touched it. Kept separate from
+ * the finished layout because the editor needs it twice over: to size a
+ * control the player has scaled, and to know where "back to default" is.
+ */
+export function defaultSlotRects(viewport: Viewport, config: ControlConfig): SlotRects {
+  return defaultLayout(viewport, config).slots
+}
 
-  // Never smaller than a 44 px finger target, never silly on a big screen.
-  const unit = clamp(Math.min(width, height) * 0.13, 44, 92)
+/** The built-in slots plus the fixed volume bar that sits beside the buttons. */
+function defaultLayout(
+  viewport: Viewport,
+  config: ControlConfig,
+): { slots: SlotRects; volume: Rect } {
+  const { cssWidth: width, cssHeight: height, safeArea } = viewport
+  const unit = baseUnit(viewport)
   const gap = Math.round(unit * 0.16)
   const left = safeArea.left + gap
   const right = width - safeArea.right - gap
   const top = safeArea.top + gap
   const bottom = height - safeArea.bottom - gap
 
-  // --- steering bar, bottom left -----------------------------------------
-  const steeringWidth = clamp(width * 0.34, unit * 3, unit * 7)
-  const steeringHeight = unit * 0.86
-  const steering: Rect = {
-    x: left,
-    y: bottom - steeringHeight,
-    width: steeringWidth,
-    height: steeringHeight,
-  }
-  const knobDiameter = steeringHeight * 0.82
+  // --- steering, bottom left ----------------------------------------------
+  // The bar is wide and shallow, the wheel is square. Each gets the size that
+  // suits it, so switching between them never leaves one squashed.
+  const steering: Rect =
+    config.steeringStyle === 'wheel'
+      ? (() => {
+          const side = Math.min(unit * 2.8, bottom - top)
+          return { x: left, y: bottom - side, width: side, height: side }
+        })()
+      : (() => {
+          const barWidth = clamp(width * 0.34, unit * 3, unit * 7)
+          const barHeight = unit * 0.86
+          return { x: left, y: bottom - barHeight, width: barWidth, height: barHeight }
+        })()
 
-  // --- clutch, left edge above the bar ------------------------------------
+  // --- clutch, left edge above the steering --------------------------------
   // Tall and narrow, because its whole point is the travel: the finger's
   // height inside it is the pedal position. Kept off to the side of the
-  // steering bar so one thumb can steer while another feathers the clutch.
+  // steering so one thumb can steer while another feathers the clutch.
   const clutchWidth = unit * 0.92
-  const clutchHeight = Math.min(unit * 2.5, steering.y - top - gap * 2)
+  const clutchHeight = Math.max(unit, Math.min(unit * 2.5, steering.y - top - gap * 2))
   const clutch: Rect = {
     x: left,
     y: steering.y - gap - clutchHeight,
@@ -129,83 +178,64 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
   }
 
   // --- gearbox, in the middle where a gear lever lives --------------------
-  // Between the wheel and the pedals when there is room for it. Held upright
-  // a phone has no such room, so the gate moves up a row instead of being
-  // squeezed into the controls on either side of it.
-  const gateHeight = unit * 2.3
+  // Between the steering and the pedals when there is room for it. Held
+  // upright a phone has no such room, so the gate moves up a row instead of
+  // being squeezed into the controls on either side of it.
+  //
+  // The box is cut to the plate's own proportions and then given every pixel
+  // of height that is going: the gate is the control a thumb has to hit a
+  // groove on, and it is drawn as bare metal with nothing behind it, so there
+  // is no panel to keep small.
+  const smallHeight = Math.max(40, unit * 0.72)
   const betweenFrom = steering.x + steering.width + gap
   const betweenTo = throttle.x - gap
   const aboveFrom = clutch.x + clutch.width + gap
   const aboveTo = throttle.x - gap
-  const fitsBetween = betweenTo - betweenFrom >= unit * 2.6
+  const fitsBetween = betweenTo - betweenFrom >= unit * 2.2
   const gateFrom = fitsBetween ? betweenFrom : aboveFrom
-  const gateSpan = Math.max(unit * 1.6, (fitsBetween ? betweenTo : aboveTo) - gateFrom)
-  const gateWidth = Math.min(unit * 4.4, gateSpan)
-  const gate: Rect = {
+  const gateSpan = Math.max(unit * 1.2, (fitsBetween ? betweenTo : aboveTo) - gateFrom)
+  const gateBottom = fitsBetween ? bottom : steering.y - gap
+  const gateRoom = Math.max(unit * 1.9, gateBottom - top - smallHeight - gap * 2)
+  const gateWidth = Math.min(gateSpan, Math.min(unit * 3.4, gateRoom) * GATE_BOX_ASPECT)
+  const gateHeight = gateWidth / GATE_BOX_ASPECT
+  const gearbox: Rect = {
     x: gateFrom + (gateSpan - gateWidth) / 2,
-    y: (fitsBetween ? bottom : steering.y - gap) - gateHeight,
+    y: gateBottom - gateHeight,
     width: gateWidth,
     height: gateHeight,
   }
 
-  // Sequential: two big paddles in the same footprint.
-  const paddleHeight = (gateHeight - gap * 0.6) / 2
-  const sequentialUp: Rect = { x: gate.x, y: gate.y, width: gate.width, height: paddleHeight }
-  const sequentialDown: Rect = {
-    x: gate.x,
-    y: gate.y + paddleHeight + gap * 0.6,
-    width: gate.width,
-    height: paddleHeight,
-  }
+  // Mode selector and starter. Wide enough for the word PARTIDA without the
+  // type having to shrink to fit, and stacked in the gap between the gate and
+  // the pedals whenever there is one: the row above the gate is where the car
+  // itself sits, and buttons drawn across the bodywork are buttons nobody can
+  // read. Only a screen too narrow for that gap falls back to the row.
+  const smallWidth = unit * 1.4
+  const besideGate = gearbox.x + gearbox.width + gap
+  const stacked = throttle.x - gap - besideGate >= smallWidth
+  const mode: Rect = stacked
+    ? { x: besideGate, y: gearbox.y, width: smallWidth, height: smallHeight }
+    : (() => {
+        const pairWidth = smallWidth * 2 + gap * 0.6
+        return {
+          x: clamp(rectCenterX(gearbox) - pairWidth / 2, left, Math.max(left, right - pairWidth)),
+          y: Math.max(top, gearbox.y - gap - smallHeight),
+          width: smallWidth,
+          height: smallHeight,
+        }
+      })()
+  const ignition: Rect = stacked
+    ? {
+        x: mode.x,
+        y: mode.y + smallHeight + gap * 0.6,
+        width: smallWidth,
+        height: smallHeight,
+      }
+    : { x: mode.x + smallWidth + gap * 0.6, y: mode.y, width: smallWidth, height: smallHeight }
 
-  // Automatic: what gear it picked, with the two selectors it still answers to.
-  const cellWidth = (gate.width - gap * 0.6) / 2
-  const gearDisplay: Rect = {
-    x: gate.x,
-    y: gate.y,
-    width: cellWidth,
-    height: gateHeight,
-  }
-  const selectorHeight = (gateHeight - gap * 0.6) / 2
-  const reverse: Rect = {
-    x: gate.x + cellWidth + gap * 0.6,
-    y: gate.y,
-    width: cellWidth,
-    height: selectorHeight,
-  }
-  const neutral: Rect = {
-    x: reverse.x,
-    y: gate.y + selectorHeight + gap * 0.6,
-    width: cellWidth,
-    height: selectorHeight,
-  }
-
-  // Wide, but never so short that a thumb misses them.
-  const smallHeight = Math.max(40, unit * 0.72)
-  const smallWidth = (gate.width - gap * 0.6) / 2
-  const mode: Rect = {
-    x: gate.x,
-    y: gate.y - gap - smallHeight,
-    width: smallWidth,
-    height: smallHeight,
-  }
-  const ignition: Rect = {
-    x: gate.x + smallWidth + gap * 0.6,
-    y: mode.y,
-    width: smallWidth,
-    height: smallHeight,
-  }
-
-  // --- top right buttons, laid out right to left --------------------------
-  // Never below the 44 px a fingertip needs, however small the screen is.
-  const buttonSize = Math.max(44, unit * 0.72)
-  const button = (index: number): Rect => ({
-    x: right - buttonSize - index * (buttonSize + gap * 0.5),
-    y: top,
-    width: buttonSize,
-    height: buttonSize,
-  })
-  const buttonsLeft = button(3).x
+  // --- volume, left of the top-right buttons ------------------------------
+  const buttonSize = topButtonSize(unit)
+  const buttonsLeft = topButton(viewport, 4).x
   const volumeWidth = clamp(unit * 2.6, 60, Math.max(60, buttonsLeft - left - gap))
   const volume: Rect = {
     x: buttonsLeft - gap * 0.5 - volumeWidth,
@@ -215,33 +245,133 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
   }
 
   return {
+    slots: { steering, throttle, brake, clutch, handbrake, gearbox, mode, ignition },
+    volume,
+  }
+}
+
+function baseUnit(viewport: Viewport): number {
+  // Never smaller than a 44 px finger target, never silly on a big screen.
+  return clamp(Math.min(viewport.cssWidth, viewport.cssHeight) * 0.13, 44, 92)
+}
+
+function topButtonSize(unit: number): number {
+  // Never below the 44 px a fingertip needs, however small the screen is.
+  return Math.max(44, unit * 0.72)
+}
+
+/** Top-right buttons, counted right to left. Never movable: they are the way in. */
+function topButton(viewport: Viewport, index: number): Rect {
+  const unit = baseUnit(viewport)
+  const gap = Math.round(unit * 0.16)
+  const size = topButtonSize(unit)
+  return {
+    x: viewport.cssWidth - viewport.safeArea.right - gap - size - index * (size + gap * 0.5),
+    y: viewport.safeArea.top + gap,
+    width: size,
+    height: size,
+  }
+}
+
+/**
+ * A control's own rect: the built-in one, or the player's centre and size if
+ * they have moved it. Kept on screen whatever the saved numbers say, so a
+ * layout carried over from another screen can never strand a control.
+ */
+function placeSlot(base: Rect, config: ControlConfig, slot: ControlSlot, viewport: Viewport): Rect {
+  const placement = config.placements[slot]
+  if (placement === null) return base
+  const scale = clamp(placement.scale, MIN_CONTROL_SCALE, MAX_CONTROL_SCALE)
+  const width = base.width * scale
+  const height = base.height * scale
+  const x = placement.x * viewport.cssWidth - width / 2
+  const y = placement.y * viewport.cssHeight - height / 2
+  return {
+    x: clamp(x, 0, Math.max(0, viewport.cssWidth - width)),
+    y: clamp(y, 0, Math.max(0, viewport.cssHeight - height)),
+    width,
+    height,
+  }
+}
+
+export function computeTouchLayout(viewport: Viewport, config: ControlConfig): TouchLayout {
+  const unit = baseUnit(viewport)
+  const gap = Math.round(unit * 0.16)
+  const base = defaultLayout(viewport, config)
+
+  const slots = {} as SlotRects
+  const hidden = {} as Record<ControlSlot, boolean>
+  const latch = {} as Record<ControlSlot, boolean>
+  for (const slot of CONTROL_SLOTS) {
+    slots[slot] = placeSlot(base.slots[slot], config, slot, viewport)
+    const placement = config.placements[slot]
+    hidden[slot] = placement !== null && placement.hidden
+    latch[slot] = placement !== null && placement.latch
+  }
+
+  const { steering, gearbox } = slots
+  const knobDiameter = steering.height * 0.82
+
+  // Everything below is derived from the finished slots, never from the
+  // built-in ones: a gate the player has dragged takes its channels with it.
+  const paddleHeight = (gearbox.height - gap * 0.6) / 2
+  // The box is cut to the H gate's proportions, which is taller than it is
+  // wide. The automatic stacks inside it rather than sitting side by side:
+  // the gear it picked across the top, the two selectors it still answers to
+  // underneath. Side by side in a tall box gives two slivers.
+  const displayHeight = gearbox.height * 0.5
+  const selectorTop = gearbox.y + displayHeight + gap * 0.6
+  const selectorHeight = Math.max(1, gearbox.height - displayHeight - gap * 0.6)
+  const cellWidth = (gearbox.width - gap * 0.6) / 2
+
+  return {
     unit,
+    gap,
+    slots,
+    hidden,
+    latch,
     steering,
     steeringGrab: inflate(steering, unit * 0.3, unit * 0.55),
-    steeringTravel: (steeringWidth - knobDiameter) / 2,
-    throttle,
-    brake,
-    clutch,
-    handbrake,
-    gate,
-    sequentialUp,
-    sequentialDown,
-    gearDisplay,
-    reverse,
-    neutral,
-    mode,
-    ignition,
-    volume,
-    controlsButton: button(0),
-    debugButton: button(1),
-    muteButton: button(2),
-    fullscreenButton: button(3),
+    steeringTravel: Math.max(1, (steering.width - knobDiameter) / 2),
+    throttle: slots.throttle,
+    brake: slots.brake,
+    clutch: slots.clutch,
+    handbrake: slots.handbrake,
+    gate: gearbox,
+    sequentialUp: { x: gearbox.x, y: gearbox.y, width: gearbox.width, height: paddleHeight },
+    sequentialDown: {
+      x: gearbox.x,
+      y: gearbox.y + paddleHeight + gap * 0.6,
+      width: gearbox.width,
+      height: paddleHeight,
+    },
+    gearDisplay: { x: gearbox.x, y: gearbox.y, width: gearbox.width, height: displayHeight },
+    reverse: { x: gearbox.x, y: selectorTop, width: cellWidth, height: selectorHeight },
+    neutral: {
+      x: gearbox.x + cellWidth + gap * 0.6,
+      y: selectorTop,
+      width: cellWidth,
+      height: selectorHeight,
+    },
+    mode: slots.mode,
+    ignition: slots.ignition,
+    volume: base.volume,
+    menuButton: topButton(viewport, 0),
+    controlsButton: topButton(viewport, 1),
+    debugButton: topButton(viewport, 2),
+    muteButton: topButton(viewport, 3),
+    fullscreenButton: topButton(viewport, 4),
   }
 }
 
 /** Knob diameter derived from the bar, shared by drawing and hit testing. */
 export function steeringKnobDiameter(layout: TouchLayout): number {
   return layout.steering.height * 0.82
+}
+
+/** The largest circle the wheel art can be drawn as inside its slot. */
+export function steeringWheelDiameter(layout: TouchLayout): number {
+  return Math.min(layout.steering.width, layout.steering.height)
 }
 
 // ------------------------------------------------------------------ H gate
@@ -292,6 +422,9 @@ export const GATE_DEAD_SLOT = {
 /** Manifest keys of the gate's two layers. */
 export const GEAR_GATE_KEY = 'gear_gate'
 export const GEAR_KNOB_KEY = 'gear_knob'
+
+/** Manifest key of the wheel, the alternative to the steering bar. */
+export const STEERING_WHEEL_KEY = 'steering_wheel'
 
 export interface GateGeometry {
   readonly columns: number
@@ -394,3 +527,11 @@ export function gearGatePosition(
   const column = Math.floor((gear - 1) / 2)
   return { column, lane: gear % 2 === 1 ? -1 : 1 }
 }
+
+/**
+ * Aspect the gate box itself is cut to, so the plate fills it exactly: the
+ * art's own aspect, widened by the label bands the box reserves above and
+ * below it. Sizing the box this way is what stops a large gate from being
+ * large mostly in empty margin.
+ */
+const GATE_BOX_ASPECT = GATE_ART_ASPECT * (1 - LABEL_BAND_FRAC * 2)

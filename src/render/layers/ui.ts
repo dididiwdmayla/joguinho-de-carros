@@ -3,11 +3,13 @@
  *
  * The on-screen controls live here, laid out by the same module the input
  * layer hit tests against, so what is drawn and what responds can never drift
- * apart. Everything is drawn in code except the gearbox, which is two art
- * layers positioned by that same geometry -- nothing is ever persisted.
+ * apart -- including once the player has dragged them somewhere else. A
+ * control the player has hidden is simply not drawn, unless the editor is
+ * open, where it shows as an empty box waiting to be switched back on.
  */
 import { clamp } from '../../core/math'
 import { drawDebugOverlay } from '../../debug/overlay'
+import { WHEEL_MAX_ANGLE, type ControlSlot } from '../../ui/controlLayout'
 import {
   columnToX,
   computeTouchLayout,
@@ -17,7 +19,11 @@ import {
   gateGeometry,
   GEAR_GATE_KEY,
   GEAR_KNOB_KEY,
+  rectCenterX,
+  rectCenterY,
+  STEERING_WHEEL_KEY,
   steeringKnobDiameter,
+  steeringWheelDiameter,
   type Rect,
   type TouchLayout,
 } from '../../ui/touchLayout'
@@ -32,38 +38,89 @@ import {
 import { inScreenSpace } from '../renderer'
 import type { RenderContext } from '../scene'
 import { roundedRectPath } from '../shapes'
+import { drawEditorChrome, drawEditorScrim, drawMenu } from './menu'
+import {
+  drawButtonBox,
+  drawLabel,
+  drawLatchBadge,
+  drawRotatedLabel,
+  FILL_LEVEL,
+  GLYPH,
+  PANEL_FILL,
+  PANEL_FILL_PRESSED,
+  PANEL_STROKE,
+  PANEL_STROKE_PRESSED,
+} from './uiStyle'
 
-const PANEL_FILL = 'rgba(10, 13, 17, 0.42)'
-const PANEL_FILL_PRESSED = 'rgba(96, 148, 208, 0.42)'
-const PANEL_STROKE = 'rgba(255, 255, 255, 0.20)'
-const PANEL_STROKE_PRESSED = 'rgba(160, 205, 255, 0.65)'
-const GLYPH = 'rgba(226, 236, 245, 0.88)'
-const FILL_LEVEL = 'rgba(120, 180, 245, 0.34)'
+/** How much of a hidden control still shows while the editor is open. */
+const GHOST_ALPHA = 0.28
+/**
+ * And how much of a visible one. Inside the editor the controls are furniture
+ * to be arranged, so they are turned down far enough for the names and
+ * outlines drawn over them to be the thing that reads.
+ */
+const EDIT_ALPHA = 0.5
 
 export function drawUi(context: RenderContext): void {
-  const layout = computeTouchLayout(context.viewport)
+  const { ui } = context
+  const layout = computeTouchLayout(context.viewport, ui.controls)
+  const editing = ui.menu === 'edit'
 
   inScreenSpace(context, () => {
-    drawButtons(context, layout)
-    if (context.ui.controlsVisible) {
-      drawSteering(context, layout)
-      drawPedals(context, layout)
-      drawHandbrake(context, layout)
-      drawClutch(context, layout)
-      drawGearbox(context, layout)
-      drawVolume(context, layout)
-    }
-    if (context.ui.rotateHintVisible) drawRotateHint(context, layout)
+    // The editor dims the world first, so the controls it is about to lay out
+    // read as furniture rather than as something still driving the car.
+    if (editing) drawEditorScrim(context)
+    // The top-right row is the way into the menu; inside the editor the bar
+    // takes that corner over, so the row stands down.
+    if (!editing) drawButtons(context, layout)
+    if (ui.controlsVisible) drawControls(context, layout, editing)
+    if (ui.rotateHintVisible && !editing) drawRotateHint(context, layout)
   })
 
   if (context.debug !== null) drawDebugOverlay(context, context.debug)
-  if (context.ui.instructionsVisible) drawInstructions(context)
+  if (editing) drawEditorChrome(context, layout)
+  if (ui.menu === 'main') drawMenu(context)
+  if (ui.instructionsVisible) drawInstructions(context)
+}
+
+/**
+ * Every driving control, each one skipped when it is hidden -- or drawn faint
+ * when the editor is open, which is the only place a hidden control can be
+ * found and switched back on.
+ */
+function drawControls(context: RenderContext, layout: TouchLayout, editing: boolean): void {
+  const { ctx } = context
+  const show = (slot: ControlSlot, draw: () => void): void => {
+    const hidden = layout.hidden[slot]
+    if (hidden && !editing) return
+    if (!editing) {
+      draw()
+      return
+    }
+    ctx.save()
+    ctx.globalAlpha = hidden ? GHOST_ALPHA : EDIT_ALPHA
+    draw()
+    ctx.restore()
+  }
+
+  show('steering', () => drawSteering(context, layout))
+  show('throttle', () => drawPedal(context, layout, 'throttle'))
+  show('brake', () => drawPedal(context, layout, 'brake'))
+  show('handbrake', () => drawHandbrake(context, layout))
+  show('clutch', () => drawClutch(context, layout))
+  show('gearbox', () => drawGearbox(context, layout))
+  show('mode', () => drawModeButton(context, layout))
+  show('ignition', () => drawIgnitionButton(context, layout))
+  drawVolume(context, layout)
 }
 
 // ------------------------------------------------------------------ buttons
 
 function drawButtons(context: RenderContext, layout: TouchLayout): void {
   const { ctx, ui } = context
+  drawButtonBox(ctx, layout.menuButton, ui.pressedButtons.has('menu'))
+  drawMenuGlyph(ctx, layout.menuButton)
+
   drawButtonBox(ctx, layout.controlsButton, ui.pressedButtons.has('controls'))
   drawControlsGlyph(ctx, layout.controlsButton, ui.controlsVisible)
 
@@ -79,13 +136,26 @@ function drawButtons(context: RenderContext, layout: TouchLayout): void {
   }
 }
 
-function drawButtonBox(ctx: CanvasRenderingContext2D, rect: Rect, pressed: boolean): void {
-  ctx.fillStyle = pressed ? PANEL_FILL_PRESSED : PANEL_FILL
-  ctx.strokeStyle = pressed ? PANEL_STROKE_PRESSED : PANEL_STROKE
-  ctx.lineWidth = 1.5
-  roundedRectPath(ctx, rect.x, rect.y, rect.width, rect.height, rect.height * 0.26)
-  ctx.fill()
-  ctx.stroke()
+/** Three sliders: settings. Deliberately unlike the control layer's three bars. */
+function drawMenuGlyph(ctx: CanvasRenderingContext2D, rect: Rect): void {
+  const trackWidth = rect.width * 0.52
+  const left = rect.x + (rect.width - trackWidth) / 2
+  const thickness = Math.max(1.5, rect.height * 0.055)
+  const knob = Math.max(2.5, rect.height * 0.075)
+  const knobAt = [0.68, 0.34, 0.58]
+  ctx.strokeStyle = GLYPH
+  ctx.fillStyle = GLYPH
+  ctx.lineWidth = thickness
+  for (let i = 0; i < 3; i++) {
+    const y = rect.y + rect.height * (0.32 + i * 0.18)
+    ctx.beginPath()
+    ctx.moveTo(left, y)
+    ctx.lineTo(left + trackWidth, y)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(left + trackWidth * knobAt[i], y, knob, 0, Math.PI * 2)
+    ctx.fill()
+  }
 }
 
 /** Three bars: the control layer itself. Crossed through when hidden. */
@@ -176,6 +246,14 @@ function drawFullscreenGlyph(ctx: CanvasRenderingContext2D, rect: Rect, active: 
 // ----------------------------------------------------------------- steering
 
 function drawSteering(context: RenderContext, layout: TouchLayout): void {
+  if (context.ui.controls.steeringStyle === 'wheel') drawSteeringWheel(context, layout)
+  else drawSteeringBar(context, layout)
+  if (layout.latch.steering) {
+    drawLatchBadge(context.ctx, layout.steering, context.ui.latched.has('steering'))
+  }
+}
+
+function drawSteeringBar(context: RenderContext, layout: TouchLayout): void {
   const { ctx, input, ui } = context
   const rect = layout.steering
   const radius = rect.height / 2
@@ -188,7 +266,7 @@ function drawSteering(context: RenderContext, layout: TouchLayout): void {
   ctx.stroke()
 
   // Centre notch, so the straight-ahead position is visible at a glance.
-  const centre = rect.x + rect.width / 2
+  const centre = rectCenterX(rect)
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)'
   ctx.lineWidth = 1.5
   ctx.beginPath()
@@ -201,30 +279,73 @@ function drawSteering(context: RenderContext, layout: TouchLayout): void {
   ctx.fillStyle = ui.steeringActive ? 'rgba(150, 200, 255, 0.62)' : 'rgba(220, 232, 244, 0.42)'
   ctx.strokeStyle = PANEL_STROKE
   ctx.beginPath()
-  ctx.arc(knobX, rect.y + rect.height / 2, knob / 2, 0, Math.PI * 2)
+  ctx.arc(knobX, rectCenterY(rect), knob / 2, 0, Math.PI * 2)
   ctx.fill()
   ctx.stroke()
 }
 
-// ------------------------------------------------------------------- pedals
+/**
+ * The wheel: the art itself, turned by exactly the angle the finger has wound
+ * into it. Half a turn each way is full lock, which is what the input layer
+ * maps a circular drag onto -- so what is under the thumb and what the front
+ * wheels are doing are always the same picture.
+ */
+function drawSteeringWheel(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, input, ui, assets } = context
+  const art = assets.ui(STEERING_WHEEL_KEY)
+  const diameter = steeringWheelDiameter(layout)
+  const radius = diameter / 2
+  const cx = rectCenterX(layout.steering)
+  const cy = rectCenterY(layout.steering)
 
-function drawPedals(context: RenderContext, layout: TouchLayout): void {
-  const { ctx, input } = context
-  drawPedal(ctx, layout.throttle, input.throttle, 'up', 'GAS')
-  drawPedal(ctx, layout.brake, input.brake, 'down', 'FREIO')
+  // A disc behind it: the art is mostly rim and spokes, and against asphalt
+  // that alone does not read as something to put a thumb on.
+  ctx.beginPath()
+  ctx.arc(cx, cy, radius * 0.99, 0, Math.PI * 2)
+  ctx.fillStyle = PANEL_FILL
+  ctx.fill()
+  ctx.strokeStyle = ui.steeringActive ? PANEL_STROKE_PRESSED : PANEL_STROKE
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // Fixed mark at twelve o'clock: without it a wheel a quarter turn out looks
+  // exactly like a wheel that is straight.
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - radius * 1.02)
+  ctx.lineTo(cx, cy - radius * 0.84)
+  ctx.stroke()
+
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.rotate(clamp(input.steer, -1, 1) * WHEEL_MAX_ANGLE)
+  ctx.drawImage(
+    art.image,
+    art.trim.x,
+    art.trim.y,
+    art.trim.width,
+    art.trim.height,
+    -radius,
+    -radius,
+    diameter,
+    diameter,
+  )
+  ctx.restore()
 }
+
+// ------------------------------------------------------------------- pedals
 
 /**
  * A pedal fills from the edge the finger travels towards, so the amount being
  * applied is visible while it is held.
  */
-function drawPedal(
-  ctx: CanvasRenderingContext2D,
-  rect: Rect,
-  amount: number,
-  direction: 'up' | 'down',
-  label: string,
-): void {
+function drawPedal(context: RenderContext, layout: TouchLayout, slot: 'throttle' | 'brake'): void {
+  const { ctx, input, ui } = context
+  const rect = layout[slot]
+  const amount = slot === 'throttle' ? input.throttle : input.brake
+  const direction = slot === 'throttle' ? 'up' : 'down'
+  const label = slot === 'throttle' ? 'GAS' : 'FREIO'
   const pressed = amount > 0
   const radius = rect.height * 0.24
 
@@ -248,13 +369,15 @@ function drawPedal(
   ctx.stroke()
 
   drawLabel(ctx, rect, label, 0.24)
+  if (layout.latch[slot]) drawLatchBadge(ctx, rect, ui.latched.has(slot))
 }
 
 function drawHandbrake(context: RenderContext, layout: TouchLayout): void {
-  const { ctx, input } = context
+  const { ctx, input, ui } = context
   const rect = layout.handbrake
   drawButtonBox(ctx, rect, input.handbrake)
   drawLabel(ctx, rect, 'MAO', 0.3)
+  if (layout.latch.handbrake) drawLatchBadge(ctx, rect, ui.latched.has('handbrake'))
 }
 
 // ---------------------------------------------------------------- powertrain
@@ -264,7 +387,7 @@ function drawHandbrake(context: RenderContext, layout: TouchLayout): void {
  * down its side. Seeing the friction point is how you learn to feel it.
  */
 function drawClutch(context: RenderContext, layout: TouchLayout): void {
-  const { ctx, powertrain } = context
+  const { ctx, ui, powertrain } = context
   const rect = layout.clutch
   const pressed = clamp(1 - powertrain.clutch, 0, 1)
   const radius = rect.width * 0.3
@@ -293,16 +416,23 @@ function drawClutch(context: RenderContext, layout: TouchLayout): void {
   ctx.stroke()
 
   drawRotatedLabel(ctx, rect, 'EMBREAGEM')
+  if (layout.latch.clutch) drawLatchBadge(ctx, rect, ui.latched.has('clutch'))
+}
+
+function drawModeButton(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, ui, powertrain } = context
+  drawButtonBox(ctx, layout.mode, ui.pressedButtons.has('mode'))
+  drawLabel(ctx, layout.mode, powertrain.modeLabel, 0.4)
+}
+
+function drawIgnitionButton(context: RenderContext, layout: TouchLayout): void {
+  const { ctx, ui, powertrain } = context
+  drawButtonBox(ctx, layout.ignition, ui.pressedButtons.has('ignition') || powertrain.stalled)
+  drawLabel(ctx, layout.ignition, 'PARTIDA', 0.34)
 }
 
 function drawGearbox(context: RenderContext, layout: TouchLayout): void {
   const { ctx, ui, powertrain } = context
-
-  drawButtonBox(ctx, layout.mode, ui.pressedButtons.has('mode'))
-  drawLabel(ctx, layout.mode, powertrain.modeLabel, 0.4)
-  drawButtonBox(ctx, layout.ignition, ui.pressedButtons.has('ignition') || powertrain.stalled)
-  drawLabel(ctx, layout.ignition, 'PARTIDA', 0.34)
-
   switch (ui.mode) {
     case 'manual':
       drawGate(context, layout)
@@ -337,19 +467,16 @@ function drawGearbox(context: RenderContext, layout: TouchLayout): void {
  * wherever the drag left it. The channels are cut into the art; which of
  * them is reachable is still decided entirely by the geometry in
  * touchLayout.ts, calibrated to sit exactly over the art's own grooves.
+ *
+ * Nothing is drawn behind the plate. The art is already a solid piece of
+ * metal, and a panel around it only made the gate look smaller than it is --
+ * the box is cut to the plate's own proportions instead, so every pixel of it
+ * is gate.
  */
 function drawGate(context: RenderContext, layout: TouchLayout): void {
   const { ctx, ui, assets } = context
-  const { gate } = layout
   const geometry = gateGeometry(layout, ui.forwardGears)
   const { art } = geometry
-
-  ctx.fillStyle = PANEL_FILL
-  ctx.strokeStyle = PANEL_STROKE
-  ctx.lineWidth = 1.5
-  roundedRectPath(ctx, gate.x, gate.y, gate.width, gate.height, gate.height * 0.16)
-  ctx.fill()
-  ctx.stroke()
 
   const plate = assets.ui(GEAR_GATE_KEY)
   ctx.drawImage(
@@ -466,42 +593,10 @@ function drawVolume(context: RenderContext, layout: TouchLayout): void {
 
   const knobX = bar.x + bar.width * clamp(ui.volume, 0, 1)
   ctx.beginPath()
-  ctx.arc(knobX, bar.y + bar.height / 2, barHeight * 0.78, 0, Math.PI * 2)
+  ctx.arc(knobX, rectCenterY(bar), barHeight * 0.78, 0, Math.PI * 2)
   ctx.fillStyle = 'rgba(220, 232, 244, 0.72)'
   ctx.fill()
   ctx.stroke()
-}
-
-/** Vertical caption for a tall, narrow pedal. */
-function drawRotatedLabel(ctx: CanvasRenderingContext2D, rect: Rect, label: string): void {
-  ctx.save()
-  ctx.translate(rect.x + rect.width / 2, rect.y + rect.height / 2)
-  ctx.rotate(-Math.PI / 2)
-  drawLabel(ctx, { x: -rect.height / 2, y: -rect.width / 2, width: rect.height, height: rect.width }, label, 0.34)
-  ctx.restore()
-}
-
-/** Centred caption, shrunk to fit rather than spilling out of its button. */
-function drawLabel(
-  ctx: CanvasRenderingContext2D,
-  rect: Rect,
-  label: string,
-  scale: number,
-): void {
-  let size = Math.max(9, rect.height * scale)
-  ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
-  const available = rect.width * 0.86
-  const natural = ctx.measureText(label).width
-  if (natural > available) {
-    size = Math.max(7, size * (available / natural))
-    ctx.font = `600 ${size.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
-  }
-  ctx.fillStyle = GLYPH
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(label, rect.x + rect.width / 2, rect.y + rect.height / 2)
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'alphabetic'
 }
 
 // -------------------------------------------------------------------- hints
@@ -558,10 +653,12 @@ const KEYBOARD_LINES: readonly string[] = [
   'T                  cambio: auto, seq, manual',
   'M                  mudo',
   'F3 ou `            debug',
+  'Esc                fechar o menu',
 ]
 
 const TOUCH_LINES: readonly string[] = [
-  'barra a esquerda   estercar',
+  'barra a esquerda   estercar (ou volante,',
+  '                   girado com o dedo)',
   'pedais a direita   acelerar / frear',
   'EMBREAGEM          pedal alto a esquerda:',
   '                   o dedo e o curso',
@@ -571,8 +668,9 @@ const TOUCH_LINES: readonly string[] = [
   '                   (corredor no centro = N)',
   'AUT SEQ MAN        modo do cambio',
   'PARTIDA            religar o motor',
-  'barra no topo      volume',
-  'botoes no topo     controles, mudo, tela cheia',
+  'botao de ajustes   mover, redimensionar,',
+  '                   esconder e travar',
+  'cadeado            fica ativo sem o dedo',
 ]
 
 const INSTRUCTION_FOOTER = 'toque na tela ou pressione uma tecla'

@@ -22,7 +22,8 @@ import { createGameState, INITIAL_TRANSMISSION_MODE } from './game/state'
 import { InputManager } from './input/InputManager'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
-import { GEAR_GATE_KEY, GEAR_KNOB_KEY } from './ui/touchLayout'
+import { loadControlConfig } from './ui/controlLayout'
+import { GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY } from './ui/touchLayout'
 import { createUiState, prefersTouchControls } from './ui/uiState'
 import { loadCarParams } from './vehicle/carParams'
 
@@ -91,7 +92,14 @@ async function boot(surface: Screen): Promise<void> {
   )
   const playerSpriteKey = spriteKeyForPath(manifest, car.sprite)
   const assets = await withTimeout(
-    loadAssets(manifest, [playerSpriteKey, GROUND_SPRITE_KEY], [GEAR_GATE_KEY, GEAR_KNOB_KEY]),
+    loadAssets(
+      manifest,
+      [playerSpriteKey, GROUND_SPRITE_KEY],
+      // The wheel is fetched whether or not it is the steering in use: it can
+      // be switched on mid-game, and a control that has to wait for a download
+      // before it answers is a control that feels broken.
+      [GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY],
+    ),
     `imagens (${manifest.sprites[playerSpriteKey]?.path ?? playerSpriteKey}, ` +
       `${manifest.sprites[GROUND_SPRITE_KEY]?.path ?? GROUND_SPRITE_KEY})`,
   )
@@ -107,10 +115,12 @@ async function boot(surface: Screen): Promise<void> {
     maxRpm: car.powertrain.maxRpm,
   })
 
+  // Whatever layout the player left behind last time, or the built-in one.
   const ui = createUiState(
     prefersTouchControls(),
     INITIAL_TRANSMISSION_MODE,
     car.powertrain.gearRatios.length,
+    loadControlConfig(),
   )
   const input = new InputManager({
     canvas: surface.canvas,

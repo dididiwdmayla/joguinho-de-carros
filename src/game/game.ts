@@ -14,7 +14,7 @@ import {
 import { FIXED_DT, MAX_STEPS_PER_FRAME } from '../core/constants'
 import { clamp, lerp, lerpAngle } from '../core/math'
 import type { DebugFrame } from '../debug/debugFrame'
-import { copyCameraState, stepCamera } from '../render/camera'
+import { copyCameraState, stepCamera, worldToScreenX, worldToScreenY } from '../render/camera'
 import { renderFrame } from '../render/renderer'
 import type { RenderContext } from '../render/scene'
 import { syncViewport } from '../render/viewport'
@@ -168,6 +168,13 @@ function buildRenderContext(
         vy: current.vy,
         yawRate: current.yawRate,
         steer: current.steer,
+        // Taken from exactly what the renderer is about to use: the same
+        // interpolated pose, the same interpolated camera, the same transform
+        // the ground is placed with.
+        screenX: worldToScreenX(state.cameraView, state.viewport, render.x),
+        screenY: worldToScreenY(state.cameraView, state.viewport, render.y),
+        cameraX: state.cameraView.x,
+        cameraY: state.cameraView.y,
         fps: state.fps,
         audio: state.audio.readout,
       }
