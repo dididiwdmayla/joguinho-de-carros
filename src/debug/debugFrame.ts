@@ -1,6 +1,21 @@
 /** Read-only snapshot handed to the debug overlay each frame. */
 import type { EngineAudioReadout } from '../audio/engineAudio'
+import type { ParkingCheck } from '../level/parking'
 import type { VehicleTelemetry } from '../vehicle/physics'
+
+/** What the level being driven is doing. Null while no level is loaded. */
+export interface RunDebug {
+  /** Time on the clock [s]. */
+  readonly time: number
+  /** Accumulated impact [m/s], and how it got there. */
+  readonly damage: number
+  readonly impacts: number
+  readonly worstImpact: number
+  /** The five parking conditions, live. */
+  readonly check: Readonly<ParkingCheck>
+  /** How far through the hold the bay is, 0..1. */
+  readonly hold: number
+}
 
 export interface DebugFrame {
   readonly telemetry: VehicleTelemetry
@@ -27,4 +42,6 @@ export interface DebugFrame {
   readonly audio: EngineAudioReadout
   /** Name of the fuel whose numbers the engine is running on. */
   readonly fuel: string
+  /** The run in progress, or null in the menu. */
+  readonly run: RunDebug | null
 }

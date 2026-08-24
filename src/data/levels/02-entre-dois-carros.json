@@ -1,0 +1,60 @@
+{
+  "id": "02-entre-dois-carros",
+  "nome": "ENTRE DOIS CARROS",
+  "dificuldade": 2,
+  "semente": 771402,
+  "chao": {
+    "tile": "asphalt_tile",
+    "x": -3,
+    "y": -3,
+    "largura": 52,
+    "altura": 38
+  },
+  "limites": {
+    "tipo": "retangulo",
+    "x": 0,
+    "y": 2.0,
+    "largura": 46,
+    "altura": 30
+  },
+  "spawn": { "x": 33, "y": 13.5, "angulo": 180 },
+  "vagaAlvo": { "x": 17.6, "y": 5.4, "angulo": -90, "comprimento": 5.4, "largura": 3.0, "tipo": "perpendicular" },
+  "vagas": [
+    { "x": 8.0, "y": 5.4, "angulo": -90, "comprimento": 5.4, "largura": 3.0, "tipo": "perpendicular", "ocupante": "parked_suv" },
+    { "x": 11.2, "y": 5.4, "angulo": -90, "comprimento": 5.4, "largura": 3.0, "tipo": "perpendicular" },
+    { "x": 14.4, "y": 5.4, "angulo": -90, "comprimento": 5.4, "largura": 3.0, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 20.8, "y": 5.4, "angulo": -90, "comprimento": 5.4, "largura": 3.0, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 24.0, "y": 5.4, "angulo": -90, "comprimento": 5.4, "largura": 3.0, "tipo": "perpendicular" }
+  ],
+  "obstaculos": [
+    { "tipo": "planter", "x": 3.0, "y": 5.0, "angulo": 0 },
+    { "tipo": "barrier", "x": 40.0, "y": 26.0, "angulo": 0 }
+  ],
+  "decais": [
+    { "tipo": "manhole", "x": 28.0, "y": 14.0, "angulo": 0, "escala": 1.0 },
+    { "tipo": "oil_stain", "x": 17.6, "y": 12.5, "angulo": 100, "escala": 1.0 },
+    { "tipo": "oil_stain", "x": 11.2, "y": 6.0, "angulo": 10, "escala": 0.8 },
+    { "tipo": "crack", "x": 8.0, "y": 20.0, "angulo": 12, "escala": 1.5 },
+    { "tipo": "crack", "x": 36.0, "y": 9.0, "angulo": -30, "escala": 1.2 }
+  ],
+  "parametros": {
+    "tempoAlvo": 55,
+    "tempoLimite": 240,
+    "danoLimite": 15,
+    "toleranciaCentro": 0.75,
+    "toleranciaAngulo": 12,
+    "velocidadeParado": 0.2,
+    "tempoValidacao": 1.0,
+    "pontuacao": {
+      "pesoTempo": 25,
+      "pesoDano": 20,
+      "danoReferencia": 10,
+      "pesoMotorMorto": 10,
+      "motoresReferencia": 3,
+      "pesoDistancia": 25,
+      "pesoAngulo": 20,
+      "tresEstrelas": 82,
+      "duasEstrelas": 58
+    }
+  }
+}

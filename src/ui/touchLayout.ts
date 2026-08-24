@@ -91,6 +91,7 @@ export interface TouchLayout {
   /** Master volume. */
   volume: Rect
   /** Top-right buttons, right to left. Fixed: they are how the menu is reached. */
+  pauseButton: Rect
   menuButton: Rect
   controlsButton: Rect
   debugButton: Rect
@@ -261,7 +262,7 @@ function defaultLayout(
 
   // --- volume, left of the top-right buttons ------------------------------
   const buttonSize = topButtonSize(unit)
-  const buttonsLeft = topButton(viewport, 4).x
+  const buttonsLeft = topButton(viewport, 5).x
   const volumeWidth = clamp(unit * 2.6, 60, Math.max(60, buttonsLeft - left - gap))
   const volume: Rect = {
     x: buttonsLeft - gap * 0.5 - volumeWidth,
@@ -444,11 +445,12 @@ export function computeTouchLayout(
     mode: slots.mode,
     ignition: slots.ignition,
     volume: base.volume,
-    menuButton: topButton(viewport, 0),
-    controlsButton: topButton(viewport, 1),
-    debugButton: topButton(viewport, 2),
-    muteButton: topButton(viewport, 3),
-    fullscreenButton: topButton(viewport, 4),
+    pauseButton: topButton(viewport, 0),
+    menuButton: topButton(viewport, 1),
+    controlsButton: topButton(viewport, 2),
+    debugButton: topButton(viewport, 3),
+    muteButton: topButton(viewport, 4),
+    fullscreenButton: topButton(viewport, 5),
   }
 }
 

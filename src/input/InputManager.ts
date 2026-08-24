@@ -45,6 +45,7 @@ import {
   type EditorAction,
   type MenuAction,
 } from '../ui/menuLayout'
+import { computeScreenLayout, type ScreenAction } from '../ui/screens'
 import { moveShifter, releaseShifter } from '../ui/shifterGate'
 import {
   columnAtX,
@@ -86,6 +87,7 @@ type ControlId =
 
 /** Buttons that act once when touched, rather than being held. */
 const MOMENTARY: ReadonlySet<ControlId> = new Set<ControlId>([
+  'pause',
   'menu',
   'controls',
   'fullscreen',
@@ -156,6 +158,7 @@ export class InputManager {
   private readonly keys = new Set<string>()
   private readonly pointers = new Map<number, ActivePointer>()
   private commands: PowertrainCommand[] = []
+  private screenActions: ScreenAction[] = []
   private editDrag: EditDrag | null = null
 
   constructor(options: InputManagerOptions) {
@@ -272,6 +275,18 @@ export class InputManager {
   }
 
   /**
+   * The same contract for the panels in front of the game: a press on a level
+   * or on REPETIR is collected here and acted on once, by the loop, which is
+   * the only place that is allowed to change the phase.
+   */
+  drainScreenActions(): readonly ScreenAction[] {
+    if (this.screenActions.length === 0) return EMPTY_SCREEN_ACTIONS
+    const drained = this.screenActions
+    this.screenActions = []
+    return drained
+  }
+
+  /**
    * Rebuilds the set of controls with a live finger on them, for the touch
    * layer's opacity to brighten while it is actually being worked. A latch is
    * not a finger, so a control left holding itself down drops out of the set
@@ -312,11 +327,17 @@ export class InputManager {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!event.repeat) this.onUserGesture()
-    if (this.ui.instructionsVisible && !event.repeat) {
+    // The instructions are only ever on screen while the game is being
+    // played, so only a key pressed then can be the key that dismisses them.
+    if (this.ui.instructionsVisible && this.ui.screen === null && !event.repeat) {
       this.ui.instructionsVisible = false
     }
     if (event.code === 'Escape') {
-      if (!event.repeat && this.ui.menu !== 'none') this.closeMenu()
+      if (event.repeat) return
+      // The settings menu first, then the game: one press should undo one
+      // layer, and the panel on top is the layer the player means.
+      if (this.ui.menu !== 'none') this.closeMenu()
+      else this.screenActions.push({ kind: 'pausar' })
       return
     }
     if (event.code === 'F3' || event.code === 'Backquote') {
@@ -393,8 +414,9 @@ export class InputManager {
   /** Returns true when the pointer should be captured to the canvas. */
   private beginPointer(id: number, x: number, y: number): boolean {
     this.onUserGesture()
-    // The first press anywhere only dismisses the instructions.
-    if (this.ui.instructionsVisible) {
+    // The first press anywhere only dismisses the instructions -- but they are
+    // behind whatever panel is up, so a panel is asked first.
+    if (this.ui.instructionsVisible && this.ui.screen === null && this.ui.menu === 'none') {
       this.ui.instructionsVisible = false
       return false
     }
@@ -404,6 +426,12 @@ export class InputManager {
       return false
     }
     if (this.ui.menu === 'edit') return this.pressEditor(id, x, y)
+    // A panel in front of the game owns every press while it is up: nothing
+    // underneath it is being driven.
+    if (this.ui.screen !== null) {
+      this.pressScreen(x, y)
+      return false
+    }
 
     const layout = this.layout()
     const control = this.hitTest(layout, x, y)
@@ -484,6 +512,10 @@ export class InputManager {
 
   private activateButton(button: UiButton): void {
     switch (button) {
+      case 'pause':
+        this.screenActions.push({ kind: 'pausar' })
+        this.releaseEverything()
+        break
       case 'menu':
         this.ui.menu = 'main'
         this.releaseEverything()
@@ -537,6 +569,7 @@ export class InputManager {
 
   private hitTest(layout: TouchLayout, x: number, y: number): ControlId | null {
     // Buttons that stay reachable even with the control layer hidden.
+    if (containsPoint(layout.pauseButton, x, y)) return 'pause'
     if (containsPoint(layout.menuButton, x, y)) return 'menu'
     if (containsPoint(layout.controlsButton, x, y)) return 'controls'
     if (containsPoint(layout.debugButton, x, y)) return 'debug'
@@ -673,6 +706,27 @@ export class InputManager {
     if (gear === null || gear === this.ui.shifter.requested) return
     this.ui.shifter.requested = gear
     this.commands.push({ kind: 'selectGear', gear })
+  }
+
+  // ---------------------------------------------------------------- screens
+
+  private pressScreen(x: number, y: number): void {
+    const screen = this.ui.screen
+    if (screen === null) return
+    const layout = computeScreenLayout(this.viewport, screen)
+    for (const button of layout.buttons) {
+      if (!button.enabled) continue
+      if (containsPoint(button.rect, x, y)) {
+        this.screenActions.push(button.action)
+        return
+      }
+    }
+    for (const card of layout.cards) {
+      if (containsPoint(card.rect, x, y)) {
+        this.screenActions.push({ kind: 'jogar', index: card.index })
+        return
+      }
+    }
   }
 
   // ------------------------------------------------------------------- menu
@@ -1001,6 +1055,7 @@ function wheelAngleAt(wheel: Rect, x: number, y: number): number {
 }
 
 const EMPTY_COMMANDS: readonly PowertrainCommand[] = []
+const EMPTY_SCREEN_ACTIONS: readonly ScreenAction[] = []
 
 const CONTROL_KEYS: ReadonlySet<string> = new Set<string>([
   'KeyW',

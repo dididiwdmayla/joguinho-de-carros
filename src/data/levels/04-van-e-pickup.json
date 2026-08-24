@@ -1,0 +1,89 @@
+{
+  "id": "04-van-e-pickup",
+  "nome": "ENTRE A VAN E A PICKUP",
+  "dificuldade": 4,
+  "semente": 46512,
+  "chao": {
+    "tile": "concrete_tile",
+    "x": -4,
+    "y": -2,
+    "largura": 62,
+    "altura": 36
+  },
+  "limites": {
+    "tipo": "retangulo",
+    "x": 0,
+    "y": 3.0,
+    "largura": 54,
+    "altura": 26
+  },
+  "spawn": { "x": 44.0, "y": 14.0, "angulo": 180 },
+  "vagaAlvo": { "x": 18.0, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular" },
+  "vagas": [
+    { "x": 2.28, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 4.9, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 7.52, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_suv" },
+    { "x": 10.14, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 12.76, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 15.38, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 20.62, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_pickup" },
+    { "x": 23.24, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 25.86, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 28.48, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_suv" },
+    { "x": 31.1, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 33.72, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 36.34, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 38.96, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_suv" },
+    { "x": 41.58, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 44.2, "y": 6.2, "angulo": -90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 3.58, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 6.2, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 8.82, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 11.44, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_pickup" },
+    { "x": 14.06, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular" },
+    { "x": 16.68, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 19.3, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 21.92, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_suv" },
+    { "x": 24.54, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 27.16, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 29.78, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 32.4, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular" },
+    { "x": 35.02, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_sedan" },
+    { "x": 37.64, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_van" },
+    { "x": 40.26, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_hatch" },
+    { "x": 42.88, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_pickup" },
+    { "x": 45.5, "y": 21.8, "angulo": 90, "comprimento": 5.6, "largura": 2.55, "tipo": "perpendicular", "ocupante": "parked_suv" }
+  ],
+  "obstaculos": [
+    { "tipo": "cone", "x": 8.4, "y": 14.0, "angulo": 0 },
+    { "tipo": "planter", "x": 51.0, "y": 6.0, "angulo": 0 },
+    { "tipo": "planter", "x": 51.0, "y": 26.0, "angulo": 0 }
+  ],
+  "decais": [
+    { "tipo": "manhole", "x": 30.0, "y": 14.6, "angulo": 0, "escala": 1.0 },
+    { "tipo": "oil_stain", "x": 18.0, "y": 12.0, "angulo": 90, "escala": 1.0 },
+    { "tipo": "oil_stain", "x": 40.0, "y": 16.5, "angulo": 20, "escala": 1.2 },
+    { "tipo": "crack", "x": 12.0, "y": 14.0, "angulo": 3, "escala": 1.7 },
+    { "tipo": "crack", "x": 46.0, "y": 13.0, "angulo": -6, "escala": 1.4 }
+  ],
+  "parametros": {
+    "tempoAlvo": 80,
+    "tempoLimite": 300,
+    "danoLimite": 8,
+    "toleranciaCentro": 0.55,
+    "toleranciaAngulo": 10,
+    "velocidadeParado": 0.15,
+    "tempoValidacao": 1.2,
+    "pontuacao": {
+      "pesoTempo": 25,
+      "pesoDano": 20,
+      "danoReferencia": 5,
+      "pesoMotorMorto": 10,
+      "motoresReferencia": 3,
+      "pesoDistancia": 25,
+      "pesoAngulo": 20,
+      "tresEstrelas": 84,
+      "duasEstrelas": 60
+    }
+  }
+}

@@ -25,8 +25,11 @@ export function renderFrame(context: RenderContext): void {
   drawDecals(context)
   drawSkidMarks(context)
   drawShadows(context)
-  drawVehicles(context)
+  // Scenery first, the player's car over it: the two never really overlap --
+  // the collision sees to that -- but when a bumper is a centimetre from a
+  // van, the car the player is driving is the one that should be on top.
   drawProps(context)
+  drawVehicles(context)
   drawEffects(context)
   drawUi(context)
 }

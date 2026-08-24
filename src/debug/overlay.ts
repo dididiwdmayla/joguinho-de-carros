@@ -79,10 +79,36 @@ function buildLines(frame: DebugFrame): string[] {
     row('st engate', flag(p.stallEngaged), '>25%'),
     row('st marcha', flag(p.stallInGear), 'fora N'),
     row('st morre', p.stallBelowRpm && p.stallRunning && p.stallEngaged && p.stallInGear ? 'SIM' : 'nao', ''),
+    ...runLines(frame),
     row('audio', frame.audio.state, ''),
     row('vol saida', frame.audio.masterGain.toFixed(2), ''),
     row('freq', frame.audio.fundamental.toFixed(0), 'Hz'),
     row('fps', frame.fps.toFixed(0), ''),
+  ]
+}
+
+/**
+ * The level's own numbers: what the run has cost so far, and which of the five
+ * parking conditions are being met right now. Nothing else on screen says why
+ * a bay is refusing to validate, and while a level is being tuned that is the
+ * one thing worth knowing.
+ */
+function runLines(frame: DebugFrame): string[] {
+  const run = frame.run
+  if (run === null) return []
+  const check = run.check
+  return [
+    row('tempo', run.time.toFixed(1), 's'),
+    row('dano', run.damage.toFixed(2), `x${run.impacts}`),
+    row('pior', run.worstImpact.toFixed(2), 'm/s'),
+    row('vaga d', check.distance.toFixed(2), 'm'),
+    row('vaga ang', radToDeg(check.angleError).toFixed(1), 'deg'),
+    row('vg centro', flag(check.centred), ''),
+    row('vg rodas', flag(check.wheelsInside), ''),
+    row('vg alinh', flag(check.aligned), ''),
+    row('vg parado', flag(check.stopped), ''),
+    row('vg travado', flag(check.secured), ''),
+    row('vg espera', (run.hold * 100).toFixed(0), '%'),
   ]
 }
 

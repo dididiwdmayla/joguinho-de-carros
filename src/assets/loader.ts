@@ -9,7 +9,7 @@
  * stores it as the source rect. Drawing that rect at the declared metres is
  * what makes a 4.5 m car actually cover 4.5 m of world.
  */
-import type { AssetManifest } from './manifest'
+import type { AssetManifest, SpriteBlend } from './manifest'
 
 /** Source rectangle inside the image, in image pixels. */
 export interface SpriteTrim {
@@ -27,6 +27,8 @@ export interface LoadedSprite {
   /** Extent along the sprite's +Y axis [m]. */
   readonly widthMeters: number
   readonly trim: SpriteTrim
+  /** How it is laid onto the canvas; see the manifest. */
+  readonly blend: SpriteBlend
 }
 
 /** A loaded screen-space image: the same trimming as a sprite, no physical size. */
@@ -162,6 +164,7 @@ export async function loadAssets(
         lengthMeters: entry.lengthMeters,
         widthMeters: entry.widthMeters,
         trim: measureTrim(image),
+        blend: entry.blend,
       })
     }),
     ...uiKeys.map(async (key) => {

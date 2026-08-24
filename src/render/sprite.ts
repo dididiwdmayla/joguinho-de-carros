@@ -5,10 +5,10 @@
  * is the source rect. The destination is always the size declared in the
  * manifest -- pixel dimensions of the file never reach the screen.
  */
-import type { LoadedSprite } from '../assets/loader'
+import type { DrawableSprite } from './tint'
 
 /** Draws the sprite centred on the current origin, aligned with +X. */
-export function drawSpriteMeters(ctx: CanvasRenderingContext2D, sprite: LoadedSprite): void {
+export function drawSpriteMeters(ctx: CanvasRenderingContext2D, sprite: DrawableSprite): void {
   const { trim } = sprite
   ctx.drawImage(
     sprite.image,
