@@ -1,13 +1,13 @@
 /** Screen-layer state: what is on show and what is being pressed right now. */
 import { DEFAULT_VOLUME } from '../audio/engineAudio'
-import {
-  CLUTCH_ENGAGE_LIMIT,
-  NEUTRAL_GEAR,
-  type TransmissionMode,
-} from '../vehicle/powertrain'
+import type { FuelCatalog } from '../vehicle/fuel'
+import { CLUTCH_ENGAGE_LIMIT, NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
+import type { ControlConfig, ControlSlot } from './controlLayout'
 import { gearSeat, type ShifterPattern } from './shifterPattern'
+import type { VehicleSettings } from './vehicleSettings'
 
 export type UiButton =
+  | 'menu'
   | 'controls'
   | 'fullscreen'
   | 'debug'
@@ -18,6 +18,13 @@ export type UiButton =
   | 'mute'
   | 'sequentialUp'
   | 'sequentialDown'
+
+/**
+ * Which screen is in front of the game, if any. The editor is a screen rather
+ * than a flag because everything changes inside it: the controls stop driving
+ * the car and start being furniture to be pushed around.
+ */
+export type MenuScreen = 'none' | 'main' | 'edit'
 
 /**
  * The gear lever, as a position in the gate rather than a gear.
@@ -75,6 +82,33 @@ export interface UiState {
   /** How many forward gears the gate has to lay out. */
   forwardGears: number
 
+  /** Settings, or the control editor, or neither. */
+  menu: MenuScreen
+  /**
+   * The player's own control layout. Mutated in place by the editor and
+   * written to localStorage on every change, so a phone that is closed
+   * mid-session still opens where it left off.
+   */
+  readonly controls: ControlConfig
+  /**
+   * What the player has done to the car itself. Mutated by the menu and read
+   * by the loop, which reloads the engine's numbers when the fuel changes.
+   */
+  readonly vehicle: VehicleSettings
+  /**
+   * Every fuel there is. It lives here because the menu is what picks from
+   * it -- the game only ever wants the one entry the player has chosen.
+   */
+  readonly fuels: FuelCatalog
+  /** Control being edited, null while nothing is selected. */
+  editing: ControlSlot | null
+  /**
+   * Controls left holding themselves down, and at what value. This is what
+   * buys the third finger: a clutch latched on the floor stays there while
+   * both thumbs go and find a gear.
+   */
+  readonly latched: Map<ControlSlot, number>
+
   // Mirrored from the powertrain once per frame, so the input layer can lay
   // out the gearbox and refuse a gear without reaching into the simulation.
   mode: TransmissionMode
@@ -83,14 +117,22 @@ export interface UiState {
   clutchPedal: number
 }
 
-export function createUiState(
-  controlsVisible: boolean,
-  mode: TransmissionMode,
-  forwardGears: number,
-  gatePattern: ShifterPattern,
-): UiState {
+export interface UiStateOptions {
+  /** Whether the touch layer starts on. */
+  readonly controlsVisible: boolean
+  /** How many forward gears the gate has to lay out. */
+  readonly forwardGears: number
+  /** Where every gear sits in the gate: the rule and the drawing both read it. */
+  readonly gatePattern: ShifterPattern
+  readonly controls: ControlConfig
+  readonly vehicle: VehicleSettings
+  readonly fuels: FuelCatalog
+}
+
+export function createUiState(options: UiStateOptions): UiState {
+  const { controls, forwardGears, gatePattern, vehicle } = options
   return {
-    controlsVisible,
+    controlsVisible: options.controlsVisible,
     instructionsVisible: true,
     debugVisible: false,
     muted: false,
@@ -110,7 +152,13 @@ export function createUiState(
     },
     gatePattern,
     forwardGears,
-    mode,
+    menu: 'none',
+    controls,
+    vehicle,
+    fuels: options.fuels,
+    editing: null,
+    latched: new Map<ControlSlot, number>(),
+    mode: vehicle.transmission,
     gear: NEUTRAL_GEAR,
     clutchPedal: 1,
   }

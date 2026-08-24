@@ -67,7 +67,8 @@ export interface EngineAudioReadout {
 
 export interface EngineAudio {
   readonly params: EngineAudioParams
-  readonly engine: EngineReference
+  /** Replaced when the engine's own numbers change under it. */
+  engine: EngineReference
   /** Null until a gesture lets us open the device; silent but harmless. */
   voice: EngineVoice | null
   /** Player's mute switch. Off once the device opens, as asked. */
@@ -104,6 +105,14 @@ export function createEngineAudio(
     dyingRpm: 0,
     lastRpm: engine.idleRpm,
   }
+}
+
+/**
+ * Points the synthesiser at a different engine. Idle and the limiter are what
+ * every pitch here is measured against, and a fuel is allowed to move both.
+ */
+export function setEngineReference(audio: EngineAudio, engine: EngineReference): void {
+  audio.engine = engine
 }
 
 /** True once there is a device to play through. */

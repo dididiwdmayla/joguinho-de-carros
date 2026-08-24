@@ -36,6 +36,10 @@ function buildLines(frame: DebugFrame): string[] {
     row('vy', frame.vy.toFixed(2), 'm/s'),
     row('yawRate', frame.yawRate.toFixed(3), 'rad/s'),
     row('steer', radToDeg(frame.steer).toFixed(1), 'deg'),
+    row('tela x', frame.screenX.toFixed(3), 'px'),
+    row('tela y', frame.screenY.toFixed(3), 'px'),
+    row('cam x', frame.cameraX.toFixed(3), 'm'),
+    row('cam y', frame.cameraY.toFixed(3), 'm'),
     row('slip F', radToDeg(t.slipFront).toFixed(2), 'deg'),
     row('slip R', radToDeg(t.slipRear).toFixed(2), 'deg'),
     row('Fz F', t.loadFront.toFixed(0), 'N'),
@@ -57,6 +61,12 @@ function buildLines(frame: DebugFrame): string[] {
     row('limite', p.tractionLimit.toFixed(0), 'N'),
     row('patina', p.wheelspin ? `sim ${p.wheelSlip.toFixed(2)}` : 'nao', p.wheelspin ? 'm/s' : ''),
     row('acopl', p.locked ? 'travada' : 'patina', ''),
+    // The engine's temperature, and the stall speed it is buying: cold, the
+    // second number sits above the fuel's own and slides down to it.
+    row('combust', frame.fuel, ''),
+    row('motor', p.warmth >= 1 ? 'quente' : 'frio', ''),
+    row('aquecim', (p.warmth * 100).toFixed(0), '%'),
+    row('rpm par', p.stallRpm.toFixed(0), ''),
     // The four conditions of a stall, one per line, so it is always visible
     // which one is the one not being met.
     row('st rpm', flag(p.stallBelowRpm), '<parada'),

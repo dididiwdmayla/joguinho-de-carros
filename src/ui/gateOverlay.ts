@@ -156,6 +156,18 @@ export interface GateView {
   readonly lockedColumn: number | null
   /** Forward gears the fitted box has, so a missing one draws no channel. */
   readonly forwardGears: number
+  /** How solid the plate is drawn. Ghosted like any other control while the
+   *  editor is arranging it; opaque otherwise. */
+  readonly opacity: number
+  /**
+   * True while the editor's own canvas-drawn chrome -- a control's outline,
+   * name chip and resize handle -- needs to sit on top of the gate rather
+   * than under it. The gate is a DOM element above the canvas by default, the
+   * one place a later canvas draw call cannot paint over an earlier one, so
+   * this is the escape hatch: it drops behind the canvas for exactly as long
+   * as something drawn on the canvas needs to be seen over it.
+   */
+  readonly behindCanvas: boolean
 }
 
 /** A loaded PNG, ready to be placed in the drawing by its opaque box. */
@@ -214,6 +226,8 @@ export class GateOverlay {
   private knobTransform = ''
   private locked = false
   private visible = false
+  private opacity = 1
+  private behindCanvas = false
   /** Refusal is an event, not a state: only the moment it turns on flashes. */
   private wasBlocked = false
 
@@ -270,6 +284,8 @@ export class GateOverlay {
     }
     this.place(plate)
     this.setLocked(view.locked)
+    this.setOpacity(view.opacity)
+    this.setBehindCanvas(view.behindCanvas)
     this.updateChannels(view)
     this.updateKnob(view)
     this.updateRefusal(view)
@@ -313,6 +329,23 @@ export class GateOverlay {
     if (locked === this.locked) return
     this.locked = locked
     this.root.classList.toggle('gate-locked', locked)
+  }
+
+  private setOpacity(opacity: number): void {
+    if (opacity === this.opacity) return
+    this.opacity = opacity
+    this.root.style.opacity = String(opacity)
+  }
+
+  /**
+   * Below the canvas rather than above it, for as long as the editor needs
+   * its own outline, name chip and resize handle -- painted on the canvas
+   * after everything else -- to read on top of the plate instead of under it.
+   */
+  private setBehindCanvas(behindCanvas: boolean): void {
+    if (behindCanvas === this.behindCanvas) return
+    this.behindCanvas = behindCanvas
+    this.root.style.zIndex = behindCanvas ? '-1' : ''
   }
 
   private updateChannels(view: GateView): void {

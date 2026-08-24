@@ -1,0 +1,27 @@
+{
+  "gasolina": {
+    "label": "Gasolina",
+    "hint": "Equilibrado. Difícil de morrer.",
+    "stallRpm": 450,
+    "idleRpm": 850,
+    "torqueMultiplier": 1.0,
+    "coldStallBonus": 0
+  },
+  "alcool": {
+    "label": "Álcool",
+    "hint": "Mais força, mas morre fácil — principalmente frio.",
+    "stallRpm": 620,
+    "idleRpm": 900,
+    "torqueMultiplier": 1.08,
+    "coldStallBonus": 90
+  },
+  "diesel": {
+    "label": "Diesel",
+    "hint": "Torque alto embaixo, quase não morre, mas gira pouco.",
+    "stallRpm": 350,
+    "idleRpm": 700,
+    "torqueMultiplier": 1.25,
+    "coldStallBonus": 0,
+    "maxRpm": 4500
+  }
+}

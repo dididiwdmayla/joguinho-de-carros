@@ -12,6 +12,7 @@
 import manifestUrl from './data/assets.json?url'
 import engineAudioUrl from './data/audio/engine.json?url'
 import playerSedanUrl from './data/cars/player_sedan.json?url'
+import fuelsUrl from './data/fuels.json?url'
 import shifterUrl from './data/shifter.json?url'
 
 import { loadEngineAudioParams } from './audio/audioParams'
@@ -20,10 +21,11 @@ import { loadAssets } from './assets/loader'
 import { loadManifest, spriteKeyForPath } from './assets/manifest'
 import { describeError, drawBootMessage } from './game/bootScreen'
 import { startGame } from './game/game'
-import { createGameState, INITIAL_TRANSMISSION_MODE } from './game/state'
+import { createGameState } from './game/state'
 import { InputManager } from './input/InputManager'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
+import { loadControlConfig } from './ui/controlLayout'
 import {
   gateArt,
   GateOverlay,
@@ -32,8 +34,11 @@ import {
   resolveGatePlateMode,
 } from './ui/gateOverlay'
 import { loadShifterPattern } from './ui/shifterPattern'
+import { STEERING_WHEEL_KEY } from './ui/touchLayout'
 import { createUiState, prefersTouchControls } from './ui/uiState'
+import { loadVehicleSettings } from './ui/vehicleSettings'
 import { loadCarParams } from './vehicle/carParams'
+import { applyFuel, loadFuelCatalog, resolveFuel } from './vehicle/fuel'
 
 /** The world this stage drives on. */
 const GROUND_SPRITE_KEY = 'asphalt_tile'
@@ -94,19 +99,29 @@ async function boot(surface: Screen): Promise<void> {
   drawBootMessage(surface.canvas, surface.ctx, surface.viewport, ['carregando...'], '#8b98a5')
 
   const manifest = await withTimeout(loadManifest(manifestUrl), 'manifesto de assets (assets.json)')
-  const car = await withTimeout(
+  const carBase = await withTimeout(
     loadCarParams(playerSedanUrl, 'player_sedan.json'),
     'parametros do carro (player_sedan.json)',
+  )
+  const fuels = await withTimeout(
+    loadFuelCatalog(fuelsUrl, 'fuels.json'),
+    'tipos de combustivel (fuels.json)',
   )
   const gatePattern = await withTimeout(
     loadShifterPattern(shifterUrl),
     'padrao do cambio (shifter.json)',
   )
-  const playerSpriteKey = spriteKeyForPath(manifest, car.sprite)
+  const playerSpriteKey = spriteKeyForPath(manifest, carBase.sprite)
   // The gate is drawn from the pattern, so its plate art is only fetched when
-  // the texture mode is the one asked for. The gradient mode needs no asset.
+  // the texture mode is the one asked for -- the gradient mode needs no
+  // asset. The wheel is fetched whether or not it is the steering in use: it
+  // can be switched on mid-game, and a control that has to wait for a
+  // download before it answers is a control that feels broken.
   const plateMode = resolveGatePlateMode()
-  const uiKeys = plateMode === 'texture' ? [GEAR_GATE_KEY, GEAR_KNOB_KEY] : [GEAR_KNOB_KEY]
+  const uiKeys =
+    plateMode === 'texture'
+      ? [GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY]
+      : [GEAR_KNOB_KEY, STEERING_WHEEL_KEY]
   const assets = await withTimeout(
     loadAssets(manifest, [playerSpriteKey, GROUND_SPRITE_KEY], uiKeys),
     `imagens (${manifest.sprites[playerSpriteKey]?.path ?? playerSpriteKey}, ` +
@@ -117,6 +132,13 @@ async function boot(surface: Screen): Promise<void> {
     'parametros de audio (engine.json)',
   )
 
+  // Whatever the player last chose, checked against the catalog that was
+  // actually loaded. Pouring the fuel in is all that ever happens to it: what
+  // comes back is a car, and nothing downstream can tell it apart from one
+  // somebody authored. The game state resolves its own copy the same way.
+  const vehicle = loadVehicleSettings(fuels)
+  const car = applyFuel(carBase, resolveFuel(fuels, vehicle.fuel))
+
   // Built now, opened later: no browser lets a page make a sound before the
   // player has touched it, so until then the game simply runs in silence.
   const audio = createEngineAudio(audioParams, {
@@ -124,12 +146,15 @@ async function boot(surface: Screen): Promise<void> {
     maxRpm: car.powertrain.maxRpm,
   })
 
-  const ui = createUiState(
-    prefersTouchControls(),
-    INITIAL_TRANSMISSION_MODE,
-    car.powertrain.gearRatios.length,
+  // Whatever layout the player left behind last time, or the built-in one.
+  const ui = createUiState({
+    controlsVisible: prefersTouchControls(),
+    forwardGears: car.powertrain.gearRatios.length,
     gatePattern,
-  )
+    controls: loadControlConfig(),
+    vehicle,
+    fuels,
+  })
   // Built once from the pattern; from here on a frame only moves it.
   const gate = new GateOverlay({
     pattern: gatePattern,
@@ -175,7 +200,7 @@ async function boot(surface: Screen): Promise<void> {
     input,
     ui,
     gate,
-    car,
+    carBase,
     audio,
     playerSpriteKey,
     groundSpriteKey: GROUND_SPRITE_KEY,

@@ -19,6 +19,7 @@
   "ui": {
     "dashboard": { "path": "assets/ui/dashboard.png" },
     "gear_gate": { "path": "assets/ui/gear_gate.png" },
-    "gear_knob": { "path": "assets/ui/gear_knob.png" }
+    "gear_knob": { "path": "assets/ui/gear_knob.png" },
+    "steering_wheel": { "path": "assets/ui/steering_wheel.png" }
   }
 }
