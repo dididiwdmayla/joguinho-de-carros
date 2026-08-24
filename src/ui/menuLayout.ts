@@ -13,11 +13,12 @@
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
 import { resolveFuel } from '../vehicle/fuel'
-import { transmissionModeName } from '../vehicle/powertrain'
+import { transmissionModeLabel, transmissionModeName } from '../vehicle/powertrain'
 import {
   CONTROL_LABELS,
   controlsOpacityLabel,
   LATCHABLE_SLOTS,
+  layoutFor,
   PRESET_LABELS,
   wheelTurnsLabel,
   type ControlSlot,
@@ -31,7 +32,9 @@ export type MenuAction =
   | 'controlsOpacity'
   | 'preset'
   | 'edit'
+  /** Back to the built-in layout: the gearbox in use, or all three of them. */
   | 'reset'
+  | 'resetAll'
   | 'fuel'
   | 'transmission'
   | 'close'
@@ -107,7 +110,9 @@ function menuSections(ui: UiState): readonly SectionDefinition[] {
     {
       title: 'CONTROLE',
       note: 'nao muda a dificuldade',
-      hint: '',
+      // The layout belongs to the gearbox in use, and nothing else on this
+      // panel does -- so the panel has to say which one is being changed.
+      hint: `layout do cambio ${transmissionModeName(ui.mode)}`,
       rows: [
         {
           action: 'wheelTurns',
@@ -124,9 +129,18 @@ function menuSections(ui: UiState): readonly SectionDefinition[] {
           label: 'OPACIDADE DOS CONTROLES',
           value: controlsOpacityLabel(ui.controls.controlsOpacity),
         },
-        { action: 'preset', label: 'LAYOUT', value: PRESET_LABELS[ui.controls.preset] },
+        {
+          action: 'preset',
+          label: 'LAYOUT',
+          value: PRESET_LABELS[layoutFor(ui.controls, ui.mode).preset],
+        },
         { action: 'edit', label: 'EDITAR CONTROLES', value: '' },
-        { action: 'reset', label: 'RESTAURAR PADRAO', value: '' },
+        {
+          action: 'reset',
+          label: 'RESTAURAR PADRAO',
+          value: transmissionModeLabel(ui.mode),
+        },
+        { action: 'resetAll', label: 'RESTAURAR TODOS OS MODOS', value: '' },
       ],
     },
     {
@@ -351,6 +365,7 @@ export function computeMenuLayout(viewport: Viewport, ui: UiState): MenuLayout {
 export type EditorAction =
   | 'done'
   | 'reset'
+  | 'resetAll'
   | 'preset'
   | 'hide'
   | 'latch'
@@ -415,13 +430,20 @@ export function computeEditorLayout(
 
   const buttons: EditorButton[] = []
   const firstRow: Rect = { x: bar.x, y: bar.y + gap, width: bar.width, height: rowHeight }
-  const top = cells(firstRow, 3, 0, gap)
+  const top = cells(firstRow, 4, 0, gap)
   buttons.push({ action: 'done', label: 'PRONTO', rect: top[0] })
-  buttons.push({ action: 'reset', label: 'RESTAURAR', rect: top[1] })
+  // Two restores, because a layout belongs to one gearbox: the near one puts
+  // back only what is on the screen, the far one puts back all three.
+  buttons.push({
+    action: 'reset',
+    label: `RESTAURAR ${transmissionModeLabel(ui.mode)}`,
+    rect: top[1],
+  })
+  buttons.push({ action: 'resetAll', label: 'RESTAURAR TUDO', rect: top[2] })
   buttons.push({
     action: 'preset',
-    label: PRESET_LABELS[ui.controls.preset],
-    rect: top[2],
+    label: PRESET_LABELS[layoutFor(ui.controls, ui.mode).preset],
+    rect: top[3],
   })
 
   let selectionLabel: string | null = null
@@ -482,7 +504,7 @@ export function computeEditorLayout(
     handle,
     hint:
       selected === null
-        ? 'toque num controle para escolher, arraste para mover'
+        ? `layout do ${transmissionModeName(ui.mode)}: toque num controle para escolher`
         : 'arraste para mover, use o canto para redimensionar',
   }
 }

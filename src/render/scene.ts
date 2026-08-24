@@ -47,6 +47,10 @@ export interface PowertrainReadout {
   clutch: number
   /** -1 reverse, 0 neutral, 1..n a forward gear. */
   gear: number
+  /** Parking pawl in. Not a gear, so the selector cannot read it off one. */
+  park: boolean
+  /** Whether P would go in right now, so the selector can show it greyed. */
+  parkReady: boolean
   /** True while the engine is dead, so the starter can ask to be pressed. */
   stalled: boolean
 }

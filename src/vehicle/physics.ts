@@ -170,8 +170,13 @@ export function stepVehicle(
 
   // --- 5. Longitudinal force ----------------------------------------------
   // Until the rear axle gets a proper lock model, the handbrake is simply a
-  // full brake application.
-  const brake = Math.max(clamp(input.brake, 0, 1), input.handbrake ? 1 : 0)
+  // full brake application -- and so is the automatic's parking pawl, which
+  // holds the driven shaft still whether or not anybody is on the pedal.
+  const brake = Math.max(
+    clamp(input.brake, 0, 1),
+    input.handbrake ? 1 : 0,
+    powertrain.park ? 1 : 0,
+  )
   // Everything that slows the car down whatever the engine is doing. The
   // powertrain is handed these too: it has to know how fast the car itself
   // will be going next step to work out how much the wheels are outrunning it.

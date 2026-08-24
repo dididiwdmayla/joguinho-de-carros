@@ -12,6 +12,7 @@
 import manifestUrl from './data/assets.json?url'
 import engineAudioUrl from './data/audio/engine.json?url'
 import playerSedanUrl from './data/cars/player_sedan.json?url'
+import controlsUrl from './data/controls.json?url'
 import fuelsUrl from './data/fuels.json?url'
 import shifterUrl from './data/shifter.json?url'
 
@@ -23,6 +24,7 @@ import { describeError, drawBootMessage } from './game/bootScreen'
 import { startGame } from './game/game'
 import { createGameState } from './game/state'
 import { InputManager } from './input/InputManager'
+import { loadPedalCurve } from './input/pedalCurve'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
 import { loadControlConfig } from './ui/controlLayout'
@@ -111,6 +113,10 @@ async function boot(surface: Screen): Promise<void> {
     loadShifterPattern(shifterUrl),
     'padrao do cambio (shifter.json)',
   )
+  const pedals = await withTimeout(
+    loadPedalCurve(controlsUrl, 'controls.json'),
+    'curva dos pedais (controls.json)',
+  )
   const playerSpriteKey = spriteKeyForPath(manifest, carBase.sprite)
   // The gate is drawn from the pattern, so its plate art is only fetched when
   // the texture mode is the one asked for -- the gradient mode needs no
@@ -167,6 +173,7 @@ async function boot(surface: Screen): Promise<void> {
     canvas: surface.canvas,
     viewport: surface.viewport,
     ui,
+    pedals,
     // Runs inside the event handler, which is the only place a device opens
     // -- and the only place a suspended one can be told to run. Called on
     // every gesture, not just the first: one resume can be refused.

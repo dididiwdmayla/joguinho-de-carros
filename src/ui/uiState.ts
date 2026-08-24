@@ -12,8 +12,11 @@ export type UiButton =
   | 'controls'
   | 'fullscreen'
   | 'debug'
+  /** The automatic's selector: P R N D, one button each. */
+  | 'park'
   | 'reverse'
   | 'neutral'
+  | 'drive'
   | 'ignition'
   | 'mode'
   | 'mute'
