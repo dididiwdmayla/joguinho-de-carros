@@ -92,16 +92,12 @@ export function drawUi(context: RenderContext): void {
  * found and switched back on.
  */
 function drawControls(context: RenderContext, layout: TouchLayout, editing: boolean): void {
-  const { ctx } = context
+  const { ctx, ui } = context
   const show = (slot: ControlSlot, draw: () => void): void => {
     const hidden = layout.hidden[slot]
     if (hidden && !editing) return
-    if (!editing) {
-      draw()
-      return
-    }
     ctx.save()
-    ctx.globalAlpha = hidden ? GHOST_ALPHA : EDIT_ALPHA
+    ctx.globalAlpha = editing ? (hidden ? GHOST_ALPHA : EDIT_ALPHA) : ui.controlOpacity[slot]
     draw()
     ctx.restore()
   }
@@ -114,7 +110,13 @@ function drawControls(context: RenderContext, layout: TouchLayout, editing: bool
   show('gearbox', () => drawGearbox(context, layout))
   show('mode', () => drawModeButton(context, layout))
   show('ignition', () => drawIgnitionButton(context, layout))
+
+  // Fixed rather than a slot of its own, so it dims and brightens the same
+  // way but is never dragged, hidden or ghosted in the editor.
+  ctx.save()
+  ctx.globalAlpha = editing ? 1 : ui.controlOpacity.volume
   drawVolume(context, layout)
+  ctx.restore()
 }
 
 // ------------------------------------------------------------------ buttons
@@ -508,8 +510,9 @@ function syncGate(context: RenderContext, layout: TouchLayout, editing: boolean)
     // Ghosted like any other control while the editor is arranging it, and
     // dropped behind the canvas so the editor's own outline, name chip and
     // resize handle -- all painted after it -- are never hidden underneath a
-    // plate that a DOM element would otherwise always sit above.
-    opacity: editing ? (hidden.gearbox ? GHOST_ALPHA : EDIT_ALPHA) : 1,
+    // plate that a DOM element would otherwise always sit above. Outside the
+    // editor it follows the same chase as everything painted on the canvas.
+    opacity: editing ? (hidden.gearbox ? GHOST_ALPHA : EDIT_ALPHA) : ui.controlOpacity.gearbox,
     behindCanvas: editing,
   })
 }

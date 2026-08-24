@@ -55,6 +55,15 @@ export const CONTROL_LABELS: Readonly<Record<ControlSlot, string>> = {
 }
 
 /**
+ * Every drawn piece of the touch layer that the opacity setting reaches: the
+ * movable controls plus the volume bar, which sits beside them but is fixed
+ * and so has no slot of its own.
+ */
+export type OpacitySlot = ControlSlot | 'volume'
+
+export const OPACITY_SLOTS: readonly OpacitySlot[] = [...CONTROL_SLOTS, 'volume']
+
+/**
  * Controls a tap can leave held. The gearbox is a drag rather than a press,
  * the mode selector and the starter already act once, and the volume bar
  * keeps its position by nature -- none of them has anything to latch.
@@ -118,6 +127,39 @@ export function wheelTurnsLabel(turns: number): string {
   return value
 }
 
+/**
+ * How see-through the touch layer is, so it never becomes a wall between the
+ * thumbs and the road under it. Steps of a fifth, the same shape as the wheel
+ * turn options, from barely there to solid.
+ */
+export const CONTROL_OPACITY_OPTIONS: readonly number[] = [0.2, 0.4, 0.6, 0.8, 1]
+
+export const DEFAULT_CONTROLS_OPACITY = 0.6
+
+/** The next setting up, wrapping round to the most transparent. */
+export function nextControlsOpacity(opacity: number): number {
+  const index = CONTROL_OPACITY_OPTIONS.indexOf(nearestControlsOpacity(opacity))
+  return CONTROL_OPACITY_OPTIONS[(index + 1) % CONTROL_OPACITY_OPTIONS.length]
+}
+
+/** The offered setting closest to a number, however that number arrived. */
+export function nearestControlsOpacity(opacity: number): number {
+  let best = DEFAULT_CONTROLS_OPACITY
+  let distance = Number.POSITIVE_INFINITY
+  for (const option of CONTROL_OPACITY_OPTIONS) {
+    const gap = Math.abs(option - opacity)
+    if (gap < distance) {
+      distance = gap
+      best = option
+    }
+  }
+  return best
+}
+
+export function controlsOpacityLabel(opacity: number): string {
+  return `${Math.round(opacity * 100)}%`
+}
+
 export type PresetId = 'padrao' | 'canhoto' | 'compacto'
 
 export const PRESET_IDS: readonly PresetId[] = ['padrao', 'canhoto', 'compacto']
@@ -153,6 +195,8 @@ export interface ControlConfig {
   /** Only a label: the preset is materialised into placements when applied. */
   preset: PresetId
   placements: ControlPlacements
+  /** How see-through the touch layer is, one of CONTROL_OPACITY_OPTIONS. */
+  controlsOpacity: number
 }
 
 export function emptyPlacements(): ControlPlacements {
@@ -174,6 +218,7 @@ export function defaultControlConfig(): ControlConfig {
     wheelTurns: DEFAULT_WHEEL_TURNS,
     preset: 'padrao',
     placements: emptyPlacements(),
+    controlsOpacity: DEFAULT_CONTROLS_OPACITY,
   }
 }
 
@@ -254,6 +299,11 @@ export function loadControlConfig(): ControlConfig {
   const preset = source['preset']
   if (typeof preset === 'string' && (PRESET_IDS as readonly string[]).includes(preset)) {
     config.preset = preset as PresetId
+  }
+  const controlsOpacity = source['controlsOpacity']
+  if (typeof controlsOpacity === 'number' && Number.isFinite(controlsOpacity)) {
+    // Snapped rather than trusted, same reasoning as wheelTurns above.
+    config.controlsOpacity = nearestControlsOpacity(controlsOpacity)
   }
 
   const placements = source['placements']

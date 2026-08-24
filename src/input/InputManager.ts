@@ -26,6 +26,7 @@ import {
   LATCHABLE_SLOTS,
   MAX_CONTROL_SCALE,
   MIN_CONTROL_SCALE,
+  nextControlsOpacity,
   nextWheelTurns,
   presetPlacements,
   PRESET_IDS,
@@ -33,6 +34,7 @@ import {
   wheelMaxAngle,
   type ControlPlacement,
   type ControlSlot,
+  type OpacitySlot,
 } from '../ui/controlLayout'
 import {
   computeEditorLayout,
@@ -231,6 +233,7 @@ export class InputManager {
           : (latchedClutch ?? 0)
 
     this.ui.steeringActive = steering
+    this.syncActiveControls()
     this.state.throttle = Math.max(keyThrottle, pointerThrottle, latched.get('throttle') ?? 0)
     this.state.brake = Math.max(keyBrake, pointerBrake, latched.get('brake') ?? 0)
     // A hand on the control always outranks a latch, and so does a key: the
@@ -256,6 +259,20 @@ export class InputManager {
     const drained = this.commands
     this.commands = []
     return drained
+  }
+
+  /**
+   * Rebuilds the set of controls with a live finger on them, for the touch
+   * layer's opacity to brighten while it is actually being worked. A latch is
+   * not a finger, so a control left holding itself down drops out of the set
+   * the moment it is let go of, same as everything else.
+   */
+  private syncActiveControls(): void {
+    this.ui.activeControls.clear()
+    for (const pointer of this.pointers.values()) {
+      const slot = opacitySlotOf(pointer.control)
+      if (slot !== null) this.ui.activeControls.add(slot)
+    }
   }
 
   private anyKey(...codes: readonly string[]): boolean {
@@ -662,6 +679,9 @@ export class InputManager {
         // means nothing on the other.
         this.ui.latched.delete('steering')
         break
+      case 'controlsOpacity':
+        this.ui.controls.controlsOpacity = nextControlsOpacity(this.ui.controls.controlsOpacity)
+        break
       case 'preset':
         this.cyclePreset()
         break
@@ -866,6 +886,34 @@ function latchSlotOf(control: ControlId): ControlSlot | null {
   return (LATCHABLE_SLOTS as ReadonlySet<string>).has(control)
     ? (control as ControlSlot)
     : null
+}
+
+/**
+ * The drawn piece a pointer's control lights up, for the opacity boost while
+ * touched. The gate lever and the gearbox's buttons are all the same box on
+ * screen, and the system row along the top -- menu, layer toggle, debug, mute
+ * -- is chrome rather than a driving control, so it never brightens.
+ */
+function opacitySlotOf(control: ControlId): OpacitySlot | null {
+  switch (control) {
+    case 'steering':
+    case 'throttle':
+    case 'brake':
+    case 'clutch':
+    case 'handbrake':
+    case 'volume':
+    case 'mode':
+    case 'ignition':
+      return control
+    case 'shifter':
+    case 'sequentialUp':
+    case 'sequentialDown':
+    case 'reverse':
+    case 'neutral':
+      return 'gearbox'
+    default:
+      return null
+  }
 }
 
 /** Angle of a point about the centre of the wheel [rad]. */

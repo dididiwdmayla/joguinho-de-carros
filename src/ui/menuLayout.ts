@@ -16,6 +16,7 @@ import { resolveFuel } from '../vehicle/fuel'
 import { transmissionModeName } from '../vehicle/powertrain'
 import {
   CONTROL_LABELS,
+  controlsOpacityLabel,
   LATCHABLE_SLOTS,
   PRESET_LABELS,
   wheelTurnsLabel,
@@ -27,6 +28,7 @@ import type { UiState } from './uiState'
 export type MenuAction =
   | 'wheelTurns'
   | 'steeringStyle'
+  | 'controlsOpacity'
   | 'preset'
   | 'edit'
   | 'reset'
@@ -116,6 +118,11 @@ function menuSections(ui: UiState): readonly SectionDefinition[] {
           action: 'steeringStyle',
           label: 'ESTERCAMENTO',
           value: ui.controls.steeringStyle === 'wheel' ? 'VOLANTE' : 'BARRA',
+        },
+        {
+          action: 'controlsOpacity',
+          label: 'OPACIDADE DOS CONTROLES',
+          value: controlsOpacityLabel(ui.controls.controlsOpacity),
         },
         { action: 'preset', label: 'LAYOUT', value: PRESET_LABELS[ui.controls.preset] },
         { action: 'edit', label: 'EDITAR CONTROLES', value: '' },
