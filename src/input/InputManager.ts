@@ -1,13 +1,16 @@
 /**
- * Keyboard, touch and mouse front-end for InputState.
+ * Keyboard and pointer front-end for InputState.
  *
  * Everything DOM-flavoured about controls lives here. The simulation only ever
  * sees the normalised InputState returned by `sample()` and the queue of
  * discrete actions returned by `drainCommands()`.
  *
- * Touches are tracked one by one, keyed by their identifier, so steering with
- * one thumb while the other feathers the clutch is just two independent
- * pointers -- there is never an assumption that only one finger is down.
+ * Pointers (touch, mouse or pen) are tracked one by one, keyed by their
+ * pointerId, so steering with one thumb while the other feathers the clutch
+ * is just two independent pointers -- there is never an assumption that only
+ * one finger is down. Once a pointer starts a control it is captured to the
+ * canvas, so it keeps driving that control wherever it wanders on screen
+ * until it is lifted or cancelled.
  */
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
@@ -53,9 +56,6 @@ const MOMENTARY: ReadonlySet<ControlId> = new Set<ControlId>([
   'sequentialUp',
   'sequentialDown',
 ])
-
-/** Identifier used for the mouse, which never collides with a touch id. */
-const MOUSE_POINTER_ID = -1
 
 interface ActivePointer {
   control: ControlId
@@ -103,26 +103,20 @@ export class InputManager {
     window.addEventListener('keydown', this.onKeyDown)
     window.addEventListener('keyup', this.onKeyUp)
     window.addEventListener('blur', this.onBlur)
-    this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: false })
-    this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: false })
-    this.canvas.addEventListener('touchend', this.onTouchEnd, { passive: false })
-    this.canvas.addEventListener('touchcancel', this.onTouchEnd, { passive: false })
-    this.canvas.addEventListener('mousedown', this.onMouseDown)
-    window.addEventListener('mousemove', this.onMouseMove)
-    window.addEventListener('mouseup', this.onMouseUp)
+    this.canvas.addEventListener('pointerdown', this.onPointerDown)
+    this.canvas.addEventListener('pointermove', this.onPointerMove)
+    this.canvas.addEventListener('pointerup', this.onPointerUp)
+    this.canvas.addEventListener('pointercancel', this.onPointerUp)
   }
 
   detach(): void {
     window.removeEventListener('keydown', this.onKeyDown)
     window.removeEventListener('keyup', this.onKeyUp)
     window.removeEventListener('blur', this.onBlur)
-    this.canvas.removeEventListener('touchstart', this.onTouchStart)
-    this.canvas.removeEventListener('touchmove', this.onTouchMove)
-    this.canvas.removeEventListener('touchend', this.onTouchEnd)
-    this.canvas.removeEventListener('touchcancel', this.onTouchEnd)
-    this.canvas.removeEventListener('mousedown', this.onMouseDown)
-    window.removeEventListener('mousemove', this.onMouseMove)
-    window.removeEventListener('mouseup', this.onMouseUp)
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown)
+    this.canvas.removeEventListener('pointermove', this.onPointerMove)
+    this.canvas.removeEventListener('pointerup', this.onPointerUp)
+    this.canvas.removeEventListener('pointercancel', this.onPointerUp)
   }
 
   /**
@@ -243,71 +237,57 @@ export class InputManager {
     this.ui.shifter.dragging = false
   }
 
-  // ------------------------------------------------------------------- touch
+  // ----------------------------------------------------------------- pointer
+  // One event family for touch, mouse and pen alike. A pointer that starts a
+  // control is captured to the canvas, so it keeps driving that control no
+  // matter where it wanders on screen until it is lifted or cancelled.
 
-  private readonly onTouchStart = (event: TouchEvent): void => {
+  private readonly onPointerDown = (event: PointerEvent): void => {
     event.preventDefault()
     const rect = this.canvas.getBoundingClientRect()
-    for (const touch of Array.from(event.changedTouches)) {
-      this.beginPointer(touch.identifier, touch.clientX - rect.left, touch.clientY - rect.top)
-    }
+    const control = this.beginPointer(
+      event.pointerId,
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+    )
+    if (control !== null) this.canvas.setPointerCapture(event.pointerId)
   }
 
-  private readonly onTouchMove = (event: TouchEvent): void => {
+  private readonly onPointerMove = (event: PointerEvent): void => {
     event.preventDefault()
     const rect = this.canvas.getBoundingClientRect()
-    for (const touch of Array.from(event.changedTouches)) {
-      this.movePointer(touch.identifier, touch.clientX - rect.left, touch.clientY - rect.top)
-    }
+    this.movePointer(event.pointerId, event.clientX - rect.left, event.clientY - rect.top)
   }
 
-  private readonly onTouchEnd = (event: TouchEvent): void => {
-    event.preventDefault()
-    for (const touch of Array.from(event.changedTouches)) this.endPointer(touch.identifier)
-  }
-
-  // ------------------------------------------------------------------- mouse
-  // The same controls, so everything on screen is usable with a cursor too.
-
-  private readonly onMouseDown = (event: MouseEvent): void => {
-    const rect = this.canvas.getBoundingClientRect()
-    this.beginPointer(MOUSE_POINTER_ID, event.clientX - rect.left, event.clientY - rect.top)
-  }
-
-  private readonly onMouseMove = (event: MouseEvent): void => {
-    if (!this.pointers.has(MOUSE_POINTER_ID)) return
-    const rect = this.canvas.getBoundingClientRect()
-    this.movePointer(MOUSE_POINTER_ID, event.clientX - rect.left, event.clientY - rect.top)
-  }
-
-  private readonly onMouseUp = (): void => {
-    this.endPointer(MOUSE_POINTER_ID)
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    this.endPointer(event.pointerId)
   }
 
   // --------------------------------------------------------------- pointers
 
-  private beginPointer(id: number, x: number, y: number): void {
+  private beginPointer(id: number, x: number, y: number): ControlId | null {
     this.onUserGesture()
     // The first press anywhere only dismisses the instructions.
     if (this.ui.instructionsVisible) {
       this.ui.instructionsVisible = false
-      return
+      return null
     }
 
     const control = this.hitTest(x, y)
-    if (control === null) return
+    if (control === null) return null
 
     if (MOMENTARY.has(control)) {
       this.ui.pressedButtons.add(control as UiButton)
       this.pointers.set(id, { control, steer: 0, throttle: 0, brake: 0, clutch: 0 })
       this.activateButton(control as UiButton)
-      return
+      return control
     }
 
     if (control === 'shifter') this.ui.shifter.dragging = true
     const pointer: ActivePointer = { control, steer: 0, throttle: 0, brake: 0, clutch: 0 }
     this.updatePointer(pointer, x, y)
     this.pointers.set(id, pointer)
+    return control
   }
 
   private movePointer(id: number, x: number, y: number): void {
@@ -418,9 +398,9 @@ export class InputManager {
         pointer.brake = pedalAmount(layout.brake, y, 'down')
         break
       case 'clutch':
-        // Straight travel: the top of the pedal is out, the bottom is floored,
+        // Same travel as the other two pedals: top is floored, base is out,
         // and everything between is where the friction point is found.
-        pointer.clutch = clamp((y - layout.clutch.y) / layout.clutch.height, 0, 1)
+        pointer.clutch = clamp(1 - (y - layout.clutch.y) / layout.clutch.height, 0, 1)
         break
       case 'volume':
         this.ui.volume = clamp((x - layout.volume.x) / layout.volume.width, 0, 1)

@@ -269,12 +269,13 @@ function drawClutch(context: RenderContext, layout: TouchLayout): void {
   ctx.clip()
   if (pressed > 0) {
     ctx.fillStyle = FILL_LEVEL
-    ctx.fillRect(rect.x, rect.y, rect.width, rect.height * pressed)
+    const filled = rect.height * pressed
+    ctx.fillRect(rect.x, rect.y + rect.height - filled, rect.width, filled)
   }
   // The bite, drawn where the pedal actually is when the plates take hold.
-  // The top of the pedal is fully out, the bottom is on the floor.
-  const biteTop = rect.y + (1 - CLUTCH_BITE_END) * rect.height
-  const biteBottom = rect.y + (1 - CLUTCH_BITE_START) * rect.height
+  // The top of the pedal is on the floor, the bottom is fully out.
+  const biteTop = rect.y + CLUTCH_BITE_START * rect.height
+  const biteBottom = rect.y + CLUTCH_BITE_END * rect.height
   ctx.fillStyle = 'rgba(255, 196, 120, 0.55)'
   ctx.fillRect(rect.x + rect.width * 0.74, biteTop, rect.width * 0.26, biteBottom - biteTop)
   ctx.restore()
