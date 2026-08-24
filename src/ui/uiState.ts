@@ -1,9 +1,9 @@
 /** Screen-layer state: what is on show and what is being pressed right now. */
 import { DEFAULT_VOLUME } from '../audio/engineAudio'
 import type { FuelCatalog } from '../vehicle/fuel'
-import { NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
+import { CLUTCH_ENGAGE_LIMIT, NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
 import type { ControlConfig, ControlSlot } from './controlLayout'
-import { gearGatePosition } from './touchLayout'
+import { gearSeat, type ShifterPattern } from './shifterPattern'
 import type { VehicleSettings } from './vehicleSettings'
 
 export type UiButton =
@@ -77,6 +77,8 @@ export interface UiState {
   steeringActive: boolean
 
   readonly shifter: ShifterState
+  /** Where every gear sits in the gate: the rule and the drawing both read it. */
+  readonly gatePattern: ShifterPattern
   /** How many forward gears the gate has to lay out. */
   forwardGears: number
 
@@ -120,13 +122,15 @@ export interface UiStateOptions {
   readonly controlsVisible: boolean
   /** How many forward gears the gate has to lay out. */
   readonly forwardGears: number
+  /** Where every gear sits in the gate: the rule and the drawing both read it. */
+  readonly gatePattern: ShifterPattern
   readonly controls: ControlConfig
   readonly vehicle: VehicleSettings
   readonly fuels: FuelCatalog
 }
 
 export function createUiState(options: UiStateOptions): UiState {
-  const { controls, forwardGears, vehicle } = options
+  const { controls, forwardGears, gatePattern, vehicle } = options
   return {
     controlsVisible: options.controlsVisible,
     instructionsVisible: true,
@@ -146,6 +150,7 @@ export function createUiState(options: UiStateOptions): UiState {
       lockedColumn: null,
       requested: NEUTRAL_GEAR,
     },
+    gatePattern,
     forwardGears,
     menu: 'none',
     controls,
@@ -165,12 +170,21 @@ export function createUiState(options: UiStateOptions): UiState {
  */
 export function syncShifterToGear(ui: UiState): void {
   if (ui.shifter.dragging) return
-  const seat = gearGatePosition(ui.gear, ui.forwardGears)
+  const seat = gearSeat(ui.gatePattern, ui.gear)
   ui.shifter.column = seat.column
   ui.shifter.lane = seat.lane
   ui.shifter.requested = ui.gear
   ui.shifter.blocked = false
   ui.shifter.lockedColumn = null
+}
+
+/**
+ * Whether the gate would take a gear right now. Only the manual box has a
+ * clutch to wait for; the others are always ready. Both the input layer and
+ * the drawing ask this, so the condition exists once.
+ */
+export function gateEngageable(ui: Readonly<UiState>): boolean {
+  return ui.mode !== 'manual' || ui.clutchPedal <= CLUTCH_ENGAGE_LIMIT
 }
 
 /**

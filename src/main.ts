@@ -2,7 +2,8 @@
  * Bootstrap: load the data, wire the pieces together, start the loop.
  *
  * Every JSON file lives in src/data and is fetched at runtime by URL, so the
- * numbers that define the world are never baked into the code.
+ * numbers that define the world -- and the gear pattern the gate is both
+ * drawn from and driven by -- are never baked into the code.
  *
  * Every stage is wrapped: nothing here may fail in silence. A rejected
  * promise, a missing file or a stage that simply never answers all end up as
@@ -12,6 +13,7 @@ import manifestUrl from './data/assets.json?url'
 import engineAudioUrl from './data/audio/engine.json?url'
 import playerSedanUrl from './data/cars/player_sedan.json?url'
 import fuelsUrl from './data/fuels.json?url'
+import shifterUrl from './data/shifter.json?url'
 
 import { loadEngineAudioParams } from './audio/audioParams'
 import { createEngineAudio, resumeEngineAudio, setEngineAudioAudible } from './audio/engineAudio'
@@ -24,7 +26,15 @@ import { InputManager } from './input/InputManager'
 import { createViewport, type Viewport } from './render/viewport'
 import { isFullscreen, lockLandscape, onFullscreenChange, toggleFullscreen } from './ui/fullscreen'
 import { loadControlConfig } from './ui/controlLayout'
-import { GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY } from './ui/touchLayout'
+import {
+  gateArt,
+  GateOverlay,
+  GEAR_GATE_KEY,
+  GEAR_KNOB_KEY,
+  resolveGatePlateMode,
+} from './ui/gateOverlay'
+import { loadShifterPattern } from './ui/shifterPattern'
+import { STEERING_WHEEL_KEY } from './ui/touchLayout'
 import { createUiState, prefersTouchControls } from './ui/uiState'
 import { loadVehicleSettings } from './ui/vehicleSettings'
 import { loadCarParams } from './vehicle/carParams'
@@ -97,16 +107,23 @@ async function boot(surface: Screen): Promise<void> {
     loadFuelCatalog(fuelsUrl, 'fuels.json'),
     'tipos de combustivel (fuels.json)',
   )
+  const gatePattern = await withTimeout(
+    loadShifterPattern(shifterUrl),
+    'padrao do cambio (shifter.json)',
+  )
   const playerSpriteKey = spriteKeyForPath(manifest, carBase.sprite)
+  // The gate is drawn from the pattern, so its plate art is only fetched when
+  // the texture mode is the one asked for -- the gradient mode needs no
+  // asset. The wheel is fetched whether or not it is the steering in use: it
+  // can be switched on mid-game, and a control that has to wait for a
+  // download before it answers is a control that feels broken.
+  const plateMode = resolveGatePlateMode()
+  const uiKeys =
+    plateMode === 'texture'
+      ? [GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY]
+      : [GEAR_KNOB_KEY, STEERING_WHEEL_KEY]
   const assets = await withTimeout(
-    loadAssets(
-      manifest,
-      [playerSpriteKey, GROUND_SPRITE_KEY],
-      // The wheel is fetched whether or not it is the steering in use: it can
-      // be switched on mid-game, and a control that has to wait for a download
-      // before it answers is a control that feels broken.
-      [GEAR_GATE_KEY, GEAR_KNOB_KEY, STEERING_WHEEL_KEY],
-    ),
+    loadAssets(manifest, [playerSpriteKey, GROUND_SPRITE_KEY], uiKeys),
     `imagens (${manifest.sprites[playerSpriteKey]?.path ?? playerSpriteKey}, ` +
       `${manifest.sprites[GROUND_SPRITE_KEY]?.path ?? GROUND_SPRITE_KEY})`,
   )
@@ -133,9 +150,18 @@ async function boot(surface: Screen): Promise<void> {
   const ui = createUiState({
     controlsVisible: prefersTouchControls(),
     forwardGears: car.powertrain.gearRatios.length,
+    gatePattern,
     controls: loadControlConfig(),
     vehicle,
     fuels,
+  })
+  // Built once from the pattern; from here on a frame only moves it.
+  const gate = new GateOverlay({
+    pattern: gatePattern,
+    forwardGears: car.powertrain.gearRatios.length,
+    plateMode,
+    plateImage: plateMode === 'texture' ? gateArt(assets.ui(GEAR_GATE_KEY)) : null,
+    knobImage: gateArt(assets.ui(GEAR_KNOB_KEY)),
   })
   const input = new InputManager({
     canvas: surface.canvas,
@@ -173,6 +199,7 @@ async function boot(surface: Screen): Promise<void> {
     assets,
     input,
     ui,
+    gate,
     carBase,
     audio,
     playerSpriteKey,
@@ -182,6 +209,9 @@ async function boot(surface: Screen): Promise<void> {
   startGame(state, {
     onFatalError: (error: unknown) => {
       input.detach()
+      // The gate lives outside the canvas, so a dead frame loop would leave it
+      // frozen on top of the error message.
+      gate.destroy()
       showFailure(surface, 'quadro do jogo', error)
     },
   })

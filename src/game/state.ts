@@ -15,6 +15,7 @@ import {
 } from '../render/camera'
 import type { PowertrainReadout, Scene, VehicleRenderState } from '../render/scene'
 import type { Viewport } from '../render/viewport'
+import type { GateOverlay } from '../ui/gateOverlay'
 import type { UiState } from '../ui/uiState'
 import type { CarParams } from '../vehicle/carParams'
 import { applyFuel, resolveFuel } from '../vehicle/fuel'
@@ -34,6 +35,8 @@ export interface GameState {
   readonly assets: AssetStore
   readonly input: InputManager
   readonly ui: UiState
+  /** The H gate, drawn as an element over the canvas. */
+  readonly gate: GateOverlay
   /** Silent until a gesture opens the device; the loop feeds it regardless. */
   readonly audio: EngineAudio
 
@@ -84,6 +87,8 @@ export interface GameStateOptions {
   assets: AssetStore
   input: InputManager
   ui: UiState
+  /** The H gate, drawn as an element over the canvas. */
+  gate: GateOverlay
   /** The car as authored; the fuel the player has chosen is poured in here. */
   carBase: CarParams
   audio: EngineAudio
@@ -129,6 +134,7 @@ export function createGameState(options: GameStateOptions): GameState {
     assets: options.assets,
     input: options.input,
     ui: options.ui,
+    gate: options.gate,
     audio: options.audio,
     car,
     carBase: options.carBase,

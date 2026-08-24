@@ -47,21 +47,16 @@ import {
   computeTouchLayout,
   containsPoint,
   defaultSlotRects,
-  gateColumns,
   gateGeometry,
   rectCenterX,
   rectCenterY,
   type Rect,
   type TouchLayout,
 } from '../ui/touchLayout'
-import type { UiButton, UiState } from '../ui/uiState'
+import { gateEngageable, type UiButton, type UiState } from '../ui/uiState'
 import { saveVehicleSettings } from '../ui/vehicleSettings'
 import { nextFuelId } from '../vehicle/fuel'
-import {
-  CLUTCH_ENGAGE_LIMIT,
-  nextTransmissionMode,
-  type PowertrainCommand,
-} from '../vehicle/powertrain'
+import { nextTransmissionMode, type PowertrainCommand } from '../vehicle/powertrain'
 import { createInputState, type InputState } from './input'
 
 /** Pedal reading at the shallow edge, so a light press still does something. */
@@ -273,7 +268,7 @@ export class InputManager {
   }
 
   private layout(): TouchLayout {
-    return computeTouchLayout(this.viewport, this.ui.controls)
+    return computeTouchLayout(this.viewport, this.ui.controls, this.ui.gatePattern)
   }
 
   /**
@@ -600,14 +595,13 @@ export class InputManager {
 
   /** Turns the finger's position into gate coordinates and lets the rule move. */
   private updateShifter(layout: TouchLayout, x: number, y: number): void {
-    const gate = gateGeometry(layout, this.ui.forwardGears)
+    const gate = gateGeometry(layout, this.ui.gatePattern)
     const gear = moveShifter(this.ui.shifter, {
       targetColumn: columnAtX(gate, x),
       targetLane: (y - gate.corridorY) / gate.laneReach,
-      columns: gate.columns,
+      pattern: this.ui.gatePattern,
       forwardGears: this.ui.forwardGears,
-      // Only the manual gate has a clutch to wait for.
-      engageable: this.ui.mode !== 'manual' || this.ui.clutchPedal <= CLUTCH_ENGAGE_LIMIT,
+      engageable: gateEngageable(this.ui),
       currentGear: this.ui.gear,
     })
     this.requestGear(gear)
@@ -833,7 +827,7 @@ export class InputManager {
     const next = PRESET_IDS[(current + 1) % PRESET_IDS.length]
     // Measured against the layout the game would have used anyway, so a
     // preset lands the same way on any screen it is picked on.
-    const base = defaultSlotRects(this.viewport, this.ui.controls)
+    const base = defaultSlotRects(this.viewport, this.ui.controls, this.ui.gatePattern)
     const centers = {} as Record<ControlSlot, { x: number; y: number }>
     for (const slot of CONTROL_SLOTS) {
       centers[slot] = {
@@ -924,6 +918,3 @@ const COMMAND_KEYS: Readonly<Record<string, PowertrainCommand>> = {
   Digit5: { kind: 'selectGear', gear: 5 },
   Digit6: { kind: 'selectGear', gear: 6 },
 }
-
-/** Re-exported so callers can size the gate without importing the layout. */
-export { gateColumns }
