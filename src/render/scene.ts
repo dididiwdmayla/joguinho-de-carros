@@ -7,6 +7,7 @@
 import type { AssetStore } from '../assets/loader'
 import type { DebugFrame } from '../debug/debugFrame'
 import type { InputState } from '../input/input'
+import type { GateOverlay } from '../ui/gateOverlay'
 import type { UiState } from '../ui/uiState'
 import type { CameraView } from './camera'
 import type { Viewport } from './viewport'
@@ -65,6 +66,12 @@ export interface RenderContext {
   /** Current controls, so the on-screen pedals can show what is pressed. */
   readonly input: Readonly<InputState>
   readonly ui: Readonly<UiState>
+  /**
+   * The H gate, which is an element above the canvas rather than paint on it.
+   * The ui layer places it and tells it what the lever is doing; it is the one
+   * part of the frame the 2D context does not draw.
+   */
+  readonly gate: GateOverlay
   /** Null while the overlay is hidden. */
   readonly debug: DebugFrame | null
   readonly powertrain: Readonly<PowertrainReadout>

@@ -3,25 +3,21 @@
  *
  * The on-screen controls live here, laid out by the same module the input
  * layer hit tests against, so what is drawn and what responds can never drift
- * apart. Everything is drawn in code except the gearbox, which is two art
- * layers positioned by that same geometry -- nothing is ever persisted.
+ * apart. Everything is drawn in code, the H gate included -- it is the one
+ * control that is not painted on the canvas but placed above it as an
+ * element, because it has to react to the clutch and to the lever. Nothing is
+ * ever persisted.
  */
 import { clamp } from '../../core/math'
 import { drawDebugOverlay } from '../../debug/overlay'
 import {
-  columnToX,
   computeTouchLayout,
-  GATE_DEAD_SLOT,
-  gateGear,
-  type GateGeometry,
   gateGeometry,
-  GEAR_GATE_KEY,
-  GEAR_KNOB_KEY,
   steeringKnobDiameter,
   type Rect,
   type TouchLayout,
 } from '../../ui/touchLayout'
-import type { UiState } from '../../ui/uiState'
+import { gateEngageable } from '../../ui/uiState'
 import {
   CLUTCH_BITE_END,
   CLUTCH_BITE_START,
@@ -41,7 +37,11 @@ const GLYPH = 'rgba(226, 236, 245, 0.88)'
 const FILL_LEVEL = 'rgba(120, 180, 245, 0.34)'
 
 export function drawUi(context: RenderContext): void {
-  const layout = computeTouchLayout(context.viewport)
+  const layout = computeTouchLayout(context.viewport, context.ui.gatePattern, context.ui.mode)
+
+  // The gate is an element over the canvas, not paint on it, so it is placed
+  // before the frame is drawn rather than inside it.
+  syncGate(context, layout)
 
   inScreenSpace(context, () => {
     drawButtons(context, layout)
@@ -305,7 +305,7 @@ function drawGearbox(context: RenderContext, layout: TouchLayout): void {
 
   switch (ui.mode) {
     case 'manual':
-      drawGate(context, layout)
+      // Drawn by the gate element, placed in syncGate before the frame.
       break
     case 'sequential':
       drawButtonBox(ctx, layout.sequentialUp, ui.pressedButtons.has('sequentialUp'))
@@ -333,108 +333,31 @@ function drawGearbox(context: RenderContext, layout: TouchLayout): void {
 }
 
 /**
- * The H gate: a fixed piece of art, with the lever drawn on top of it
- * wherever the drag left it. The channels are cut into the art; which of
- * them is reachable is still decided entirely by the geometry in
- * touchLayout.ts, calibrated to sit exactly over the art's own grooves.
+ * Hands the gate over to the element that draws it.
+ *
+ * Nothing about it is painted here: it is an SVG built once from the gear
+ * pattern, so a frame only tells it where the plate goes and what the lever
+ * is doing. It is taken off the screen whenever another gearbox is fitted,
+ * the control layer is hidden, or the instructions are covering everything --
+ * the canvas has no say over an element drawn above it.
  */
-function drawGate(context: RenderContext, layout: TouchLayout): void {
-  const { ctx, ui, assets } = context
-  const { gate } = layout
-  const geometry = gateGeometry(layout, ui.forwardGears)
-  const { art } = geometry
-
-  ctx.fillStyle = PANEL_FILL
-  ctx.strokeStyle = PANEL_STROKE
-  ctx.lineWidth = 1.5
-  roundedRectPath(ctx, gate.x, gate.y, gate.width, gate.height, gate.height * 0.16)
-  ctx.fill()
-  ctx.stroke()
-
-  const plate = assets.ui(GEAR_GATE_KEY)
-  ctx.drawImage(
-    plate.image,
-    plate.trim.x,
-    plate.trim.y,
-    plate.trim.width,
-    plate.trim.height,
-    art.x,
-    art.y,
-    art.width,
-    art.height,
-  )
-
-  // The fourth column's upper channel is routed like the rest, but nothing
-  // ever seats there -- reverse is the bottom of that column. Darkened so it
-  // never reads as a live position.
-  const dead = GATE_DEAD_SLOT
-  ctx.fillStyle = 'rgba(5, 7, 10, 0.6)'
-  roundedRectPath(
-    ctx,
-    art.x + (dead.centerXFrac - dead.halfWidthFrac) * art.width,
-    art.y + dead.topFrac * art.height,
-    dead.halfWidthFrac * 2 * art.width,
-    (dead.bottomFrac - dead.topFrac) * art.height,
-    dead.halfWidthFrac * art.width * 0.7,
-  )
-  ctx.fill()
-
-  drawGateLabels(ctx, geometry, ui)
-  drawShifterKnob(context, geometry)
-}
-
-/** Gear numbers above and below the art, aligned to the channel each seats. */
-function drawGateLabels(ctx: CanvasRenderingContext2D, geometry: GateGeometry, ui: UiState): void {
-  const labelSize = Math.max(10, geometry.art.width * 0.1)
-  ctx.font = `600 ${labelSize.toFixed(0)}px system-ui, -apple-system, Segoe UI, sans-serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  for (let column = 0; column < geometry.columns; column++) {
-    const x = geometry.columnX[column]
-    for (const side of [-1, 1] as const) {
-      const gear = gateGear(column, side, ui.forwardGears)
-      if (gear === null) continue
-      ctx.fillStyle = gear === ui.gear ? '#9ecbff' : GLYPH
-      ctx.fillText(gearLabel(gear), x, side < 0 ? geometry.labelTopY : geometry.labelBottomY)
-    }
+function syncGate(context: RenderContext, layout: TouchLayout): void {
+  const { ui } = context
+  if (!ui.controlsVisible || ui.mode !== 'manual' || ui.instructionsVisible) {
+    context.gate.hide()
+    return
   }
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'alphabetic'
-}
-
-/**
- * The lever itself: a knob image following the finger, seated wherever the
- * drag left it. A ring behind it stands in for the old fill colour -- red
- * when the gate is refusing the gear and the knob has stopped at the
- * entrance, blue while it is simply being dragged.
- */
-function drawShifterKnob(context: RenderContext, geometry: GateGeometry): void {
-  const { ctx, ui, assets } = context
-  const knob = assets.ui(GEAR_KNOB_KEY)
-  const x = columnToX(geometry, ui.shifter.column)
-  const y = geometry.corridorY + ui.shifter.lane * geometry.laneReach
-  const diameter = geometry.knobDiameter
-  const radius = diameter / 2
-
-  if (ui.shifter.blocked || ui.shifter.dragging) {
-    ctx.beginPath()
-    ctx.arc(x, y, radius * 1.12, 0, Math.PI * 2)
-    ctx.strokeStyle = ui.shifter.blocked ? 'rgba(226, 100, 90, 0.9)' : 'rgba(150, 200, 255, 0.55)'
-    ctx.lineWidth = Math.max(2, diameter * 0.05)
-    ctx.stroke()
-  }
-
-  ctx.drawImage(
-    knob.image,
-    knob.trim.x,
-    knob.trim.y,
-    knob.trim.width,
-    knob.trim.height,
-    x - radius,
-    y - radius,
-    diameter,
-    diameter,
-  )
+  const { shifter } = ui
+  context.gate.sync(gateGeometry(layout, ui.gatePattern).plate, {
+    column: shifter.column,
+    lane: shifter.lane,
+    gear: ui.gear,
+    locked: !gateEngageable(ui),
+    dragging: shifter.dragging,
+    blocked: shifter.blocked,
+    lockedColumn: shifter.lockedColumn,
+    forwardGears: ui.forwardGears,
+  })
 }
 
 /** Master volume: a bar that fills to wherever the finger last left it. */

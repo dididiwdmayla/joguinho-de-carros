@@ -12,7 +12,13 @@
  */
 import { clamp } from '../core/math'
 import type { Viewport } from '../render/viewport'
-import { NEUTRAL_GEAR, REVERSE_GEAR } from '../vehicle/powertrain'
+import type { TransmissionMode } from '../vehicle/powertrain'
+import {
+  GATE_UNITS,
+  plateAspect,
+  plateWidthUnits,
+  type ShifterPattern,
+} from './shifterPattern'
 
 export interface Rect {
   x: number
@@ -36,7 +42,11 @@ export interface TouchLayout {
   clutch: Rect
   /** Handbrake, above the pedals. */
   handbrake: Rect
-  /** The H gate, used in manual. */
+  /**
+   * The H gate's plate, used in manual. There is no panel around it: the
+   * plate is the whole control, so this is both what is drawn and what a
+   * finger has to be inside to take hold of the lever.
+   */
   gate: Rect
   /** Sequential selector, in the same place as the gate. */
   sequentialUp: Rect
@@ -70,7 +80,18 @@ function inflate(rect: Rect, amountX: number, amountY: number): Rect {
   }
 }
 
-export function computeTouchLayout(viewport: Viewport): TouchLayout {
+/**
+ * Where every control sits, for the gearbox that is currently fitted.
+ *
+ * `mode` only moves the row above the gearbox: the manual plate fills the
+ * whole gearbox region, while the other two are short buttons on its floor,
+ * and the row has to come down to meet them rather than float above nothing.
+ */
+export function computeTouchLayout(
+  viewport: Viewport,
+  pattern: ShifterPattern,
+  mode: TransmissionMode,
+): TouchLayout {
   const { cssWidth: width, cssHeight: height, safeArea } = viewport
 
   // Never smaller than a 44 px finger target, never silly on a big screen.
@@ -129,69 +150,88 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
   }
 
   // --- gearbox, in the middle where a gear lever lives --------------------
-  // Between the wheel and the pedals when there is room for it. Held upright
-  // a phone has no such room, so the gate moves up a row instead of being
-  // squeezed into the controls on either side of it.
-  const gateHeight = unit * 2.3
-  const betweenFrom = steering.x + steering.width + gap
-  const betweenTo = throttle.x - gap
-  const aboveFrom = clutch.x + clutch.width + gap
-  const aboveTo = throttle.x - gap
-  const fitsBetween = betweenTo - betweenFrom >= unit * 2.6
-  const gateFrom = fitsBetween ? betweenFrom : aboveFrom
-  const gateSpan = Math.max(unit * 1.6, (fitsBetween ? betweenTo : aboveTo) - gateFrom)
-  const gateWidth = Math.min(unit * 4.4, gateSpan)
-  const gate: Rect = {
-    x: gateFrom + (gateSpan - gateWidth) / 2,
-    y: (fitsBetween ? bottom : steering.y - gap) - gateHeight,
-    width: gateWidth,
-    height: gateHeight,
-  }
+  // The gate is the most involved control on the screen, so it gets the most
+  // room: the plate is fitted as large as the seat allows, at the proportions
+  // the pattern itself works out to. Two places are tried -- between the wheel
+  // and the pedals, and above the wheel, where a phone held upright has more
+  // room -- and whichever yields the wider plate wins.
+  const smallHeight = Math.max(40, unit * 0.72)
+  // Kept clear above the plate for the mode and starter row that sits there.
+  const gateCeiling = top + smallHeight + gap * 1.6
+  const aspect = plateAspect(pattern)
+  const maxPlateWidth = unit * MAX_PLATE_WIDTH_UNITS
+  const between = fitPlate(
+    steering.x + steering.width + gap,
+    throttle.x - gap,
+    gateCeiling,
+    bottom,
+    aspect,
+    maxPlateWidth,
+  )
+  const above = fitPlate(
+    clutch.x + clutch.width + gap,
+    throttle.x - gap,
+    gateCeiling,
+    steering.y - gap,
+    aspect,
+    maxPlateWidth,
+  )
+  const gate = between.width >= above.width ? between : above
+
+  // The other two gearboxes are ordinary buttons and would look absurd blown
+  // up to the plate's size, so they keep their own footprint at the bottom of
+  // the plate's box.
+  const boxWidth = Math.min(gate.width, unit * 4.4)
+  const boxHeight = Math.min(gate.height, unit * 2.3)
+  const boxX = gate.x + (gate.width - boxWidth) / 2
+  const boxY = gate.y + gate.height - boxHeight
 
   // Sequential: two big paddles in the same footprint.
-  const paddleHeight = (gateHeight - gap * 0.6) / 2
-  const sequentialUp: Rect = { x: gate.x, y: gate.y, width: gate.width, height: paddleHeight }
+  const paddleHeight = (boxHeight - gap * 0.6) / 2
+  const sequentialUp: Rect = { x: boxX, y: boxY, width: boxWidth, height: paddleHeight }
   const sequentialDown: Rect = {
-    x: gate.x,
-    y: gate.y + paddleHeight + gap * 0.6,
-    width: gate.width,
+    x: boxX,
+    y: boxY + paddleHeight + gap * 0.6,
+    width: boxWidth,
     height: paddleHeight,
   }
 
   // Automatic: what gear it picked, with the two selectors it still answers to.
-  const cellWidth = (gate.width - gap * 0.6) / 2
+  const cellWidth = (boxWidth - gap * 0.6) / 2
   const gearDisplay: Rect = {
-    x: gate.x,
-    y: gate.y,
+    x: boxX,
+    y: boxY,
     width: cellWidth,
-    height: gateHeight,
+    height: boxHeight,
   }
-  const selectorHeight = (gateHeight - gap * 0.6) / 2
+  const selectorHeight = (boxHeight - gap * 0.6) / 2
   const reverse: Rect = {
-    x: gate.x + cellWidth + gap * 0.6,
-    y: gate.y,
+    x: boxX + cellWidth + gap * 0.6,
+    y: boxY,
     width: cellWidth,
     height: selectorHeight,
   }
   const neutral: Rect = {
     x: reverse.x,
-    y: gate.y + selectorHeight + gap * 0.6,
+    y: boxY + selectorHeight + gap * 0.6,
     width: cellWidth,
     height: selectorHeight,
   }
 
-  // Wide, but never so short that a thumb misses them.
-  const smallHeight = Math.max(40, unit * 0.72)
-  const smallWidth = (gate.width - gap * 0.6) / 2
-  const mode: Rect = {
-    x: gate.x,
-    y: gate.y - gap - smallHeight,
+  // Wide, but never so short that a thumb misses them. They sit right on top
+  // of whichever gearbox is fitted, which is the plate in manual and the short
+  // button box in the other two.
+  const smallWidth = (boxWidth - gap * 0.6) / 2
+  const headerY = (mode === 'manual' ? gate.y : boxY) - gap - smallHeight
+  const modeButton: Rect = {
+    x: boxX,
+    y: headerY,
     width: smallWidth,
     height: smallHeight,
   }
   const ignition: Rect = {
-    x: gate.x + smallWidth + gap * 0.6,
-    y: mode.y,
+    x: boxX + smallWidth + gap * 0.6,
+    y: headerY,
     width: smallWidth,
     height: smallHeight,
   }
@@ -229,7 +269,7 @@ export function computeTouchLayout(viewport: Viewport): TouchLayout {
     gearDisplay,
     reverse,
     neutral,
-    mode,
+    mode: modeButton,
     ignition,
     volume,
     controlsButton: button(0),
@@ -246,151 +286,82 @@ export function steeringKnobDiameter(layout: TouchLayout): number {
 
 // ------------------------------------------------------------------ H gate
 //
-// The gate is drawn from a fixed piece of art (gear_gate.png): a plate
-// routed with four channels, three forward pairs on the left and a fourth on
-// the right whose lower half is reverse -- its upper half is unused, since
-// there is no sixth pair. The fractions below were measured on that art's
-// own trimmed opaque box (0..1 across its width and height) so a finger's
-// drag lines up with the groove drawn under it. Columns are counted from the
-// left; the lane is -1 up, 0 in the corridor and +1 down.
+// Nothing about the gate's shape is written down here: the pattern owns the
+// proportions, and this only scales them into the room the layout found. The
+// plate is the control, so `layout.gate` is both the drawn rectangle and the
+// area a finger has to be inside to take hold of the lever.
 //
-//     1   3   5   x     <- x: column 3's upper channel. Routed into the art
-//     |   |   |   .        like the rest, but nothing lives there -- darkened
-//     +---+---+---+        rather than left looking like a fourth pair.
+//     1   3   5           <- column 3 has no position on the upper side, so
+//     |   |   |              nothing is drawn there and the corner stays solid
+//     +---+---+---+
 //     |   |   |   |
 //     2   4   6   R
 
-/** Width/height of the trimmed gate art -- the art is never stretched off
- *  its own proportions when it is fitted into the layout. */
-const GATE_ART_ASPECT = 527 / 688
-
-/** Centre-x of each of the art's four channels, left to right. */
-const GATE_COLUMN_X_FRAC: readonly number[] = [0.261, 0.4, 0.598, 0.737]
-/** Centre-y of the horizontal corridor connecting the channels. */
-const GATE_CORRIDOR_Y_FRAC = 0.5
-/** Corridor to a fully seated gear, along the art's own height. */
-const GATE_LANE_REACH_FRAC = 0.2885
-/** Knob diameter, relative to the art's width -- sized for a thumb. */
-const KNOB_DIAMETER_FRAC = 0.4
-/** Gate-box height reserved above and below the art for the gear numbers,
- *  so a label never has to sit on top of the metal. */
-const LABEL_BAND_FRAC = 0.13
+/** Plate width ceiling, in layout units, so a big screen stays sensible. */
+const MAX_PLATE_WIDTH_UNITS = 7
 
 /**
- * Column 3's upper channel, in the same 0..1 art fractions: routed into the
- * plate like every other channel, but reverse is the bottom of that column,
- * not the top, so nothing is ever seated here. Darkened in code instead of
- * left looking like a live position.
+ * The largest plate of `aspect` that fits the horizontal span `from`..`to`
+ * and the vertical room `ceiling`..`floor`, sitting on the floor.
  */
-export const GATE_DEAD_SLOT = {
-  centerXFrac: 0.737,
-  halfWidthFrac: 0.06,
-  topFrac: 0.17,
-  bottomFrac: 0.465,
+function fitPlate(
+  from: number,
+  to: number,
+  ceiling: number,
+  floor: number,
+  aspect: number,
+  maxWidth: number,
+): Rect {
+  const span = Math.max(0, to - from)
+  const room = Math.max(0, floor - ceiling)
+  let width = Math.min(span, maxWidth)
+  let height = width / aspect
+  if (height > room) {
+    height = room
+    width = height * aspect
+  }
+  // A viewport too cramped for any of this must still hand back a rectangle
+  // that can be divided by, rather than a zero that spreads NaN downstream.
+  width = Math.max(1, width)
+  height = Math.max(1, height)
+  return { x: from + (span - width) / 2, y: floor - height, width, height }
 }
-
-/** Manifest keys of the gate's two layers. */
-export const GEAR_GATE_KEY = 'gear_gate'
-export const GEAR_KNOB_KEY = 'gear_knob'
 
 export interface GateGeometry {
   readonly columns: number
-  /** Where the art is actually drawn, fitted to its own proportions. */
-  readonly art: Rect
-  /** Centre-x of each column, left to right, in layout pixels. */
-  readonly columnX: readonly number[]
+  /** The plate, which is the whole gate. */
+  readonly plate: Rect
+  /** Layout pixels per drawing unit -- the SVG is scaled by exactly this. */
+  readonly scale: number
+  /** Centre-x of column 0, in layout pixels. */
+  readonly firstColumnX: number
+  /** Distance between neighbouring columns, in layout pixels. */
+  readonly columnSpacing: number
   readonly corridorY: number
-  /** Distance from the corridor to a fully seated gear, in layout pixels. */
+  /** Corridor to a fully seated gear, in layout pixels. */
   readonly laneReach: number
-  readonly knobDiameter: number
-  /** Where gear numbers sit, above and below the art. */
-  readonly labelTopY: number
-  readonly labelBottomY: number
 }
 
-export function gateGeometry(layout: TouchLayout, forwardGears: number): GateGeometry {
-  const columns = gateColumns(forwardGears)
-  const { gate } = layout
-  const band = gate.height * LABEL_BAND_FRAC
-  const art = fitContain(
-    { x: gate.x, y: gate.y + band, width: gate.width, height: gate.height - band * 2 },
-    GATE_ART_ASPECT,
-  )
+export function gateGeometry(layout: TouchLayout, pattern: ShifterPattern): GateGeometry {
+  const plate = layout.gate
+  const scale = plate.width / plateWidthUnits(pattern)
   return {
-    columns,
-    art,
-    columnX: GATE_COLUMN_X_FRAC.slice(0, columns).map((frac) => art.x + frac * art.width),
-    corridorY: art.y + GATE_CORRIDOR_Y_FRAC * art.height,
-    laneReach: GATE_LANE_REACH_FRAC * art.height,
-    knobDiameter: art.width * KNOB_DIAMETER_FRAC,
-    labelTopY: art.y - band / 2,
-    labelBottomY: art.y + art.height + band / 2,
-  }
-}
-
-/** The largest rect with `aspect` (width/height) centred inside `box`. */
-function fitContain(box: Rect, aspect: number): Rect {
-  const width = box.height * aspect <= box.width ? box.height * aspect : box.width
-  const height = width / aspect
-  return {
-    x: box.x + (box.width - width) / 2,
-    y: box.y + (box.height - height) / 2,
-    width,
-    height,
+    columns: pattern.columns,
+    plate,
+    scale,
+    firstColumnX: plate.x + GATE_UNITS.marginX * scale,
+    columnSpacing: GATE_UNITS.columnSpacing * scale,
+    corridorY: plate.y + plate.height / 2,
+    laneReach: GATE_UNITS.laneReach * scale,
   }
 }
 
 /**
- * Continuous column (0..columns-1) for an x position, by inverting the same
- * piecewise scale the art's channels were measured against. The columns are
- * not evenly spaced, so this -- not a single division -- is what keeps a
- * dragging finger over the groove drawn under it.
+ * Continuous column (0 .. columns - 1) for an x position. The spacing is
+ * uniform, so this is one division -- which is the point of deriving the
+ * drawing from the pattern instead of measuring it off a picture.
  */
 export function columnAtX(geometry: GateGeometry, x: number): number {
-  const { columnX } = geometry
-  if (x <= columnX[0]) return 0
-  for (let i = 1; i < columnX.length; i++) {
-    if (x <= columnX[i]) {
-      const span = columnX[i] - columnX[i - 1]
-      return i - 1 + (span > 0 ? (x - columnX[i - 1]) / span : 0)
-    }
-  }
-  return columnX.length - 1
-}
-
-/** Inverse of `columnAtX`: the x position of a (possibly fractional) column. */
-export function columnToX(geometry: GateGeometry, column: number): number {
-  const { columnX } = geometry
-  const i0 = clamp(Math.floor(column), 0, columnX.length - 1)
-  const i1 = Math.min(i0 + 1, columnX.length - 1)
-  const t = clamp(column - i0, 0, 1)
-  return columnX[i0] + (columnX[i1] - columnX[i0]) * t
-}
-
-/** Forward gears in pairs, plus the column reverse lives at the bottom of. */
-export function gateColumns(forwardGears: number): number {
-  return Math.ceil(forwardGears / 2) + 1
-}
-
-/**
- * Which gear sits at a gate position, or null when there is nothing there --
- * the top of the reverse column, or an odd gear a five-speed does not have.
- */
-export function gateGear(column: number, lane: number, forwardGears: number): number | null {
-  if (lane === 0) return NEUTRAL_GEAR
-  const reverseColumn = gateColumns(forwardGears) - 1
-  if (column === reverseColumn) return lane > 0 ? REVERSE_GEAR : null
-  const gear = column * 2 + (lane < 0 ? 1 : 2)
-  return gear >= 1 && gear <= forwardGears ? gear : null
-}
-
-/** Where a gear sits in the gate, for putting the lever back where it belongs. */
-export function gearGatePosition(
-  gear: number,
-  forwardGears: number,
-): { column: number; lane: number } {
-  if (gear === REVERSE_GEAR) return { column: gateColumns(forwardGears) - 1, lane: 1 }
-  if (gear === NEUTRAL_GEAR) return { column: 0, lane: 0 }
-  const column = Math.floor((gear - 1) / 2)
-  return { column, lane: gear % 2 === 1 ? -1 : 1 }
+  const raw = (x - geometry.firstColumnX) / geometry.columnSpacing
+  return Number.isFinite(raw) ? clamp(raw, 0, geometry.columns - 1) : 0
 }

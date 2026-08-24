@@ -181,6 +181,7 @@ function buildRenderContext(
     scene: state.scene,
     input,
     ui: state.ui,
+    gate: state.gate,
     debug,
     powertrain: readout,
   }

@@ -1,0 +1,13 @@
+{
+  "colunas": 4,
+  "corredorCentral": true,
+  "posicoes": [
+    { "marcha": 1, "coluna": 0, "lado": "cima" },
+    { "marcha": 2, "coluna": 0, "lado": "baixo" },
+    { "marcha": 3, "coluna": 1, "lado": "cima" },
+    { "marcha": 4, "coluna": 1, "lado": "baixo" },
+    { "marcha": 5, "coluna": 2, "lado": "cima" },
+    { "marcha": 6, "coluna": 2, "lado": "baixo" },
+    { "marcha": "R", "coluna": 3, "lado": "baixo" }
+  ]
+}

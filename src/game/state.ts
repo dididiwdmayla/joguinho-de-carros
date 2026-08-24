@@ -15,6 +15,7 @@ import {
 } from '../render/camera'
 import type { PowertrainReadout, Scene, VehicleRenderState } from '../render/scene'
 import type { Viewport } from '../render/viewport'
+import type { GateOverlay } from '../ui/gateOverlay'
 import type { UiState } from '../ui/uiState'
 import type { CarParams } from '../vehicle/carParams'
 import { createTelemetry, type VehicleTelemetry } from '../vehicle/physics'
@@ -39,6 +40,8 @@ export interface GameState {
   readonly assets: AssetStore
   readonly input: InputManager
   readonly ui: UiState
+  /** The H gate, drawn as an element over the canvas. */
+  readonly gate: GateOverlay
   /** Silent until a gesture opens the device; the loop feeds it regardless. */
   readonly audio: EngineAudio
 
@@ -80,6 +83,7 @@ export interface GameStateOptions {
   assets: AssetStore
   input: InputManager
   ui: UiState
+  gate: GateOverlay
   car: CarParams
   audio: EngineAudio
   playerSpriteKey: string
@@ -120,6 +124,7 @@ export function createGameState(options: GameStateOptions): GameState {
     assets: options.assets,
     input: options.input,
     ui: options.ui,
+    gate: options.gate,
     audio: options.audio,
     car,
     vehicle,

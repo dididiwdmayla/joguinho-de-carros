@@ -12,7 +12,7 @@
  * able to test it without a canvas or a finger.
  */
 import { NEUTRAL_GEAR } from '../vehicle/powertrain'
-import { gateGear } from './touchLayout'
+import { gearAt, type ShifterPattern } from './shifterPattern'
 import type { ShifterState } from './uiState'
 
 /** How far into a lane the lever has to be before the gear goes in. */
@@ -20,7 +20,7 @@ export const SEAT_DEPTH = 0.8
 /** How far a gate that is refusing lets the lever in before it stops. */
 export const BLOCKED_DEPTH = 0.55
 /** Lever displacement under which it counts as being in the corridor. */
-const CORRIDOR_EPSILON = 0.02
+export const CORRIDOR_EPSILON = 0.02
 /** Pull needed before the lever leaves the corridor for a lane. */
 const LANE_ENTRY = 0.18
 /** How close to a column the lever has to be to drop into its lane. */
@@ -31,7 +31,8 @@ export interface ShifterMove {
   readonly targetColumn: number
   /** Where the finger is, -1 fully up, +1 fully down, 0 the corridor. */
   readonly targetLane: number
-  readonly columns: number
+  /** Where the gears are: the same definition the gate is drawn from. */
+  readonly pattern: ShifterPattern
   readonly forwardGears: number
   /** False while the clutch is out: the lever moves, but nothing goes in. */
   readonly engageable: boolean
@@ -44,7 +45,8 @@ export interface ShifterMove {
  * for -- null when it is somewhere that asks for nothing.
  */
 export function moveShifter(shifter: ShifterState, move: ShifterMove): number | null {
-  const { targetColumn, targetLane, columns, forwardGears } = move
+  const { targetColumn, targetLane, pattern, forwardGears } = move
+  const columns = pattern.columns
 
   if (Math.abs(shifter.lane) > CORRIDOR_EPSILON) {
     // Out of the corridor: the column is held and only the lane may move.
@@ -70,7 +72,9 @@ export function moveShifter(shifter: ShifterState, move: ShifterMove): number | 
     }
     const side = Math.abs(targetLane) > LANE_ENTRY ? Math.sign(targetLane) : 0
     const reachable =
-      side !== 0 && shifter.lockedColumn !== column && gateGear(column, side, forwardGears) !== null
+      side !== 0 &&
+      shifter.lockedColumn !== column &&
+      gearAt(pattern, column, side, forwardGears) !== null
     if (reachable && Math.abs(shifter.column - column) <= COLUMN_SNAP) {
       shifter.column = column
       shifter.lane = clampLane(targetLane)
@@ -81,7 +85,7 @@ export function moveShifter(shifter: ShifterState, move: ShifterMove): number | 
 
   const column = Math.round(shifter.column)
   const side = Math.sign(shifter.lane)
-  const here = gateGear(column, side, forwardGears)
+  const here = gearAt(pattern, column, side, forwardGears)
 
   // A gate that will not take the gear still lets the lever move; it just will
   // not let it seat. Coming out of the gear already in is always allowed.
