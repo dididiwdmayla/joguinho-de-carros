@@ -3,7 +3,7 @@ import { DEFAULT_VOLUME } from '../audio/engineAudio'
 import type { FuelCatalog } from '../vehicle/fuel'
 import { CLUTCH_ENGAGE_LIMIT, NEUTRAL_GEAR, type TransmissionMode } from '../vehicle/powertrain'
 import type { ControlConfig, ControlSlot } from './controlLayout'
-import { gearSeat, type ShifterPattern } from './shifterPattern'
+import { gearSeat, neutralColumn, type ShifterPattern } from './shifterPattern'
 import type { VehicleSettings } from './vehicleSettings'
 
 export type UiButton =
@@ -43,12 +43,13 @@ export interface ShifterState {
   /** True while the gate is refusing the gear because the clutch is out. */
   blocked: boolean
   /**
-   * Column the lever came out of during this drag, if any. In the corridor the
-   * only movement is horizontal, so a lever that has just left a gear cannot
-   * drop straight back into the other lane of the same column: it has to
-   * arrive somewhere else first, or be let go of.
+   * Column whose slot the lever is travelling in, or null while it is loose in
+   * the corridor. A lever that has come out of a gear is still in that
+   * column's slot even at the exact moment it passes the middle, which is what
+   * lets a pull straight through carry on into the gear on the other side
+   * instead of being caught by the corridor on the way past.
    */
-  lockedColumn: number | null
+  slotColumn: number | null
   /** Gear the lever last asked for, so a request is sent once. */
   requested: number
 }
@@ -143,11 +144,11 @@ export function createUiState(options: UiStateOptions): UiState {
     pressedButtons: new Set<UiButton>(),
     steeringActive: false,
     shifter: {
-      column: 0,
+      column: neutralColumn(gatePattern),
       lane: 0,
       dragging: false,
       blocked: false,
-      lockedColumn: null,
+      slotColumn: null,
       requested: NEUTRAL_GEAR,
     },
     gatePattern,
@@ -175,7 +176,7 @@ export function syncShifterToGear(ui: UiState): void {
   ui.shifter.lane = seat.lane
   ui.shifter.requested = ui.gear
   ui.shifter.blocked = false
-  ui.shifter.lockedColumn = null
+  ui.shifter.slotColumn = null
 }
 
 /**

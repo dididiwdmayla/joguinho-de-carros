@@ -504,7 +504,6 @@ function syncGate(context: RenderContext, layout: TouchLayout, editing: boolean)
     locked: !gateEngageable(ui),
     dragging: shifter.dragging,
     blocked: shifter.blocked,
-    lockedColumn: shifter.lockedColumn,
     forwardGears: ui.forwardGears,
     // Ghosted like any other control while the editor is arranging it, and
     // dropped behind the canvas so the editor's own outline, name chip and

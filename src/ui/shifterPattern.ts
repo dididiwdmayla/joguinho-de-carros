@@ -137,6 +137,19 @@ export function gearAt(
   return null
 }
 
+/**
+ * Where the lever rests with nothing engaged: the middle of the corridor, in
+ * the middle of the plate.
+ *
+ * A real lever is sprung towards the centre of the gate, so letting go of it
+ * out of gear never leaves it parked over whichever column it happened to be
+ * above. Fractional on an even number of columns, which is exactly right --
+ * the rest position is between the two middle channels, not on one of them.
+ */
+export function neutralColumn(pattern: ShifterPattern): number {
+  return (pattern.columns - 1) / 2
+}
+
 /** Where a gear sits in the gate, for putting the lever back where it belongs. */
 export function gearSeat(
   pattern: ShifterPattern,
@@ -147,7 +160,7 @@ export function gearSeat(
       if (position.gear === gear) return { column: position.column, lane: position.side }
     }
   }
-  return { column: 0, lane: 0 }
+  return { column: neutralColumn(pattern), lane: 0 }
 }
 
 // ----------------------------------------------------------------- geometry

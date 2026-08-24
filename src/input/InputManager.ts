@@ -62,9 +62,6 @@ import { createInputState, type InputState } from './input'
 /** Pedal reading at the shallow edge, so a light press still does something. */
 const PEDAL_FLOOR = 0.1
 
-/** How fast the clutch pedal comes back up once the finger leaves it [1/s]. */
-const CLUTCH_RETURN_RATE = 2.5
-
 /** Below this a latch would be holding nothing, so it is not taken. */
 const LATCH_DEADZONE = 0.01
 
@@ -148,8 +145,6 @@ export class InputManager {
   private readonly keys = new Set<string>()
   private readonly pointers = new Map<number, ActivePointer>()
   private commands: PowertrainCommand[] = []
-  /** Clutch pedal, kept here because it has to fall back on its own. */
-  private clutchPedal = 0
   private editDrag: EditDrag | null = null
 
   constructor(options: InputManagerOptions) {
@@ -180,12 +175,8 @@ export class InputManager {
     this.canvas.removeEventListener('pointercancel', this.onPointerUp)
   }
 
-  /**
-   * Merges every source into the current control state. `dt` is the frame time,
-   * which the clutch needs: released, it comes back up at its own rate rather
-   * than snapping to the top.
-   */
-  sample(dt: number): Readonly<InputState> {
+  /** Merges every source into the current control state. */
+  sample(): Readonly<InputState> {
     const keyThrottle = this.anyKey('KeyW', 'ArrowUp') ? 1 : 0
     const keyBrake = this.anyKey('KeyS', 'ArrowDown') ? 1 : 0
     const keySteer =
@@ -227,12 +218,17 @@ export class InputManager {
     const latchedClutch = latched.get('clutch')
 
     // The key has no travel, so it means the floor; a finger means wherever it
-    // is sitting; a latch means where the finger was left. With none of them,
-    // the pedal climbs back at a fixed rate.
-    if (this.keys.has('KeyC')) this.clutchPedal = 1
-    else if (clutchHeld !== null) this.clutchPedal = clutchHeld
-    else if (latchedClutch !== undefined) this.clutchPedal = latchedClutch
-    else this.clutchPedal = Math.max(0, this.clutchPedal - CLUTCH_RETURN_RATE * dt)
+    // is sitting; a latch means where the finger was left. With none of them
+    // the pedal is simply let go of, and how fast it comes back up from there
+    // is the car's own `clutchReleaseRate` -- not a second, slower ramp
+    // invented here, which is what used to turn every dumped clutch into a
+    // feathered one and swallow the shove that should follow it.
+    const clutchPedal =
+      this.keys.has('KeyC')
+        ? 1
+        : clutchHeld !== null
+          ? clutchHeld
+          : (latchedClutch ?? 0)
 
     this.ui.steeringActive = steering
     this.state.throttle = Math.max(keyThrottle, pointerThrottle, latched.get('throttle') ?? 0)
@@ -246,7 +242,7 @@ export class InputManager {
         : (latchedSteer ?? 0)
     this.state.handbrake =
       this.keys.has('Space') || pointerHandbrake || latched.has('handbrake')
-    this.state.clutchPress = this.clutchPedal
+    this.state.clutchPress = clutchPedal
     return this.state
   }
 
@@ -608,7 +604,7 @@ export class InputManager {
   }
 
   private releaseShifter(): void {
-    this.requestGear(releaseShifter(this.ui.shifter))
+    this.requestGear(releaseShifter(this.ui.shifter, this.ui.gatePattern))
   }
 
   private requestGear(gear: number | null): void {

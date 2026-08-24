@@ -152,8 +152,6 @@ export interface GateView {
   readonly dragging: boolean
   /** True while the gate is refusing the gear the lever is pushing into. */
   readonly blocked: boolean
-  /** Column the lever came out of and may not drop straight back into. */
-  readonly lockedColumn: number | null
   /** Forward gears the fitted box has, so a missing one draws no channel. */
   readonly forwardGears: number
   /** How solid the plate is drawn. Ghosted like any other control while the
@@ -350,14 +348,11 @@ export class GateOverlay {
 
   private updateChannels(view: GateView): void {
     // Where the lever may go from here. Out of the corridor the column is
-    // held and the only way is back to the middle, so nothing lights up; in
-    // the corridor it is whichever channel of the column under it still has
-    // somewhere to go. The clutch being out beats all of it.
+    // held and the lane it is in is the one it is already using, so nothing
+    // lights up; in the corridor it is whichever channels the column under it
+    // has. The clutch being out beats all of it.
     const column = Math.round(view.column)
-    const offering =
-      view.dragging && !view.locked && view.lane === 0 && view.lockedColumn !== column
-        ? column
-        : null
+    const offering = view.dragging && !view.locked && view.lane === 0 ? column : null
 
     for (const channel of this.channels) {
       const engaged = view.gear !== NEUTRAL_GEAR && channel.position.gear === view.gear
